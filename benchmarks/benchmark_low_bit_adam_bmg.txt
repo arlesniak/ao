@@ -1,0 +1,214 @@
+##############
+#  timm/vit_base_patch16_224.augreg_in21k
+##############
+
+# 10 epochs
+
+python benchmarks/benchmark_low_bit_adam.py --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW --n_epochs 10 --batch_size 64
+Epoch 10/10: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 295/295 [01:21<00:00,  3.63it/s]
+Evaluating: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 99/99 [00:06<00:00, 16.11it/s]
+Epoch 10/10: val_acc=93.21
+Max memory used: 7.72 GB
+
+python benchmarks/benchmark_low_bit_adam.py --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW8bitAo  --n_epochs 10 --batch_size 64
+Epoch 10/10: 100%|██████████| 295/295 [01:24<00:00,  3.48it/s]
+Evaluating: 100%|██████████| 99/99 [00:06<00:00, 15.76it/s]
+Epoch 10/10: val_acc=93.79
+Max memory used: 7.21 GB
+
+# 1 epoch, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [01:51<00:00, 21.22it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:10<00:00, 78.17it/s]
+Epoch 1/1: val_acc=94.25
+Max memory used: 2.03 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [03:01<00:00, 13.00it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:09<00:00, 79.00it/s]
+Epoch 1/1: val_acc=94.73
+Max memory used: 1.52 GB  
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 8 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [03:01<00:00, 12.99it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:10<00:00, 78.46it/s]
+Epoch 1/1: val_acc=4.02
+Max memory used: 1.52 GB
+
+##############
+#  timm/vit_huge_patch14_224.orig_in21k
+##############
+
+# 1 epoch, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler
+Epoch 1/1:   0%|                                                                                           | 1/2362 [00:12<7:54:26, 12.06s/it]
+RuntimeError: UR backend failed. UR backend returns:40 (UR_RESULT_ERROR_OUT_OF_RESOURCES)
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [14:33<00:00,  2.70it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:56<00:00, 13.98it/s]
+Epoch 1/1: val_acc=94.37
+Max memory used: 9.88 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 8 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [13:34<00:00,  2.90it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:56<00:00, 13.97it/s]
+Epoch 1/1: val_acc=94.10
+Max memory used: 9.88 GB
+
+# 1 epoch, batch 4
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 4 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 4725/4725 [15:40<00:00,  5.02it/s]
+Evaluating: 100%|█████████████████████████████████████████████████████████████████████████████████████████| 1575/1575 [01:09<00:00, 22.65it/s]
+Epoch 1/1: val_acc=94.16
+Max memory used: 11.44 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 4 --cosine_lr_scheduler
+Model parameters: 630,822,445
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 4725/4725 [18:22<00:00,  4.29it/s]
+Evaluating: 100%|█████████████████████████████████████████████████████████████████████████████████████████| 1575/1575 [01:09<00:00, 22.70it/s]
+Epoch 1/1: val_acc=94.16
+Max memory used: 7.57 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 4 --cosine_lr_scheduler
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 4725/4725 [17:44<00:00,  4.44it/s]
+Evaluating: 100%|█████████████████████████████████████████████████████████████████████████████████████████| 1575/1575 [01:09<00:00, 22.65it/s]
+Epoch 1/1: val_acc=93.90
+Max memory used: 7.57 GB
+
+########################################################
+ compiled
+########################################################
+
+# 1 epoch, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler  --compile
+RuntimeError: Native API failed. Native API returns: 20 (UR_RESULT_ERROR_DEVICE_LOST)
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler  --compile
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [15:01<00:00,  2.62it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [01:13<00:00, 10.68it/s]
+Epoch 1/1: val_acc=94.00
+Max memory used: 9.33 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 8 --cosine_lr_scheduler  --compile
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [12:33<00:00,  3.13it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:52<00:00, 14.87it/s]
+Epoch 1/1: val_acc=93.78
+Max memory used: 9.33 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW4bitAo --batch_size 8 --cosine_lr_scheduler  --compile
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [14:57<00:00,  2.63it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:53<00:00, 14.83it/s]
+Epoch 1/1: val_acc=94.03
+Max memory used: 8.76 GB 
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW4bitAo --batch_size 4 --cosine_lr_scheduler  --compile
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 4725/4725 [20:07<00:00,  3.91it/s]
+Evaluating: 100%|█████████████████████████████████████████████████████████████████████████████████████████| 1575/1575 [01:08<00:00, 22.87it/s]
+Epoch 1/1: val_acc=94.16
+Max memory used: 6.66 GB
+
+
+# 1 epoch, cpu_offload ao, batch 4
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 4 --cosine_lr_scheduler  --compile --optim_cpu_offload ao
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 4725/4725 [46:33<00:00,  1.69it/s]
+Evaluating: 100%|█████████████████████████████████████████████████████████████████████████████████████████| 1575/1575 [01:09<00:00, 22.59it/s]
+Epoch 1/1: val_acc=94.22
+Max memory used: 6.23 GB
+
+##############
+#  cpu_offload
+#  timm/vit_base_patch16_224.augreg_in21k
+##############
+
+# AdamW, 1 epoch, cpu_offload None, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler  --compile 
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [01:46<00:00, 22.23it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:10<00:00, 75.50it/s]
+Epoch 1/1: val_acc=94.81
+Max memory used: 1.95 GB
+
+# AdamW, 1 epoch, cpu_offload ao, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler  --compile --optim_cpu_offload ao
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [04:39<00:00,  8.44it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:23<00:00, 33.58it/s]
+Epoch 1/1: val_acc=94.46
+Max memory used: 1.53 GB
+
+# AdamW, 1 epoch, cpu_offload ao_offload_grads, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler  --compile --optim_cpu_offload ao_offload_grads
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [04:44<00:00,  8.30it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:13<00:00, 60.25it/s]
+Epoch 1/1: val_acc=94.24
+Max memory used: 1.26 GB
+ 
+# AdamW8bitAo, 1 epoch, cpu_offload None, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler  --compile
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [02:52<00:00, 13.69it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:10<00:00, 75.39it/s]
+Epoch 1/1: val_acc=9.68
+Max memory used: 1.44 GB
+
+# AdamW8bitAo, 1 epoch, cpu_offload ao, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler  --compile --optim_cpu_offload ao
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [12:41<00:00,  3.10it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:10<00:00, 74.65it/s]
+Epoch 1/1: val_acc=93.94
+Max memory used: 1.26 GB
+
+# AdamW8bitAo, 1 epoch, cpu_offload ao_offload_grads, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler  --compile --optim_cpu_offload ao_offload_grads
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [13:03<00:00,  3.02it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:11<00:00, 70.98it/s]
+Epoch 1/1: val_acc=7.13
+Max memory used: 1.26 GB
+
+# AdamWFp8Ao, 1 epoch, cpu_offload None, batch 8
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 8 --cosine_lr_scheduler  --compile
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [02:44<00:00, 14.34it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:11<00:00, 67.81it/s]
+Epoch 1/1: val_acc=32.71
+Max memory used: 1.44 GB
+
+# AdamWFp8Ao, 1 epoch, cpu_offload ao, batch 8
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 8 --cosine_lr_scheduler  --compile --optim_cpu_offload ao
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [10:33<00:00,  3.73it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:18<00:00, 43.24it/s]
+Epoch 1/1: val_acc=8.37
+Max memory used: 1.26 GB
+
+# AdamWFp8Ao, 1 epoch, cpu_offload ao_offload_grads, batch 8
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1  --model  "timm/vit_base_patch16_224.augreg_in21k" --amp bf16 --optim AdamWFp8Ao --batch_size 8 --cosine_lr_scheduler  --compile --optim_cpu_offload ao_offload_grads
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [10:34<00:00,  3.72it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:17<00:00, 43.84it/s]
+Epoch 1/1: val_acc=2.22
+Max memory used: 1.26 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler --compile --optim_cpu_offload ao
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [28:02<00:00,  1.40it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [01:12<00:00, 10.86it/s]
+Epoch 1/1: val_acc=93.52
+Max memory used: 8.07 GB  
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler --compile --optim_cpu_offload ao_offload_grads
+Epoch 1/1: 100%|██████████████████████████████████████████████████████████████████████████████████████████| 2362/2362 [27:21<00:00,  1.44it/s]
+Evaluating: 100%|███████████████████████████████████████████████████████████████████████████████████████████| 788/788 [00:53<00:00, 14.83it/s]
+Epoch 1/1: val_acc=94.02
+Max memory used: 8.07 GB  
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler --compile --optim_cpu_offload ao
+Epoch 1/1:   1%|█▏                                                                                        | 31/2362 [01:45<1:36:15,  2.48s/it]
+Epoch 1/1:   1%|█▏                                                                                        | 31/2362 [01:46<2:13:34,  3.44s/it]  
+######################
+  python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler --compile --optim_cpu_offload ao_offload_grads
