@@ -29,7 +29,7 @@ import time
 from contextlib import nullcontext
 from functools import partial
 
-import bitsandbytes as bnb
+# import bitsandbytes as bnb
 import datasets
 import timm
 import torch
@@ -47,7 +47,7 @@ assert _DEVICE in ["cuda", "xpu"], "Benchmark currently only supports CUDA & XPU
 
 OPTIM_MAP = dict(
     AdamW=partial(torch.optim.AdamW, fused=True),
-    AdamW8bitBnb=bnb.optim.AdamW8bit,
+    # AdamW8bitBnb=bnb.optim.AdamW8bit,
     AdamW8bitAo=optim.AdamW8bit,
     AdamWFp8Ao=optim.AdamWFp8,
     AdamW4bitAo=optim.AdamW4bit,
@@ -118,13 +118,17 @@ def get_parser():
     return parser
 
 
-def get_dloader(args, training: bool):
+def get_dloader(args, training: bool, input_size=None):
     transforms = [v2.ToImage()]
-
+    vert_size = input_size[1] if input_size is not None else 224
+    horiz_size = input_size[2] if input_size is not None else 224
     if training:
-        transforms.extend([v2.RandomResizedCrop(224), v2.RandomHorizontalFlip()])
+        transforms.extend([v2.RandomResizedCrop(vert_size), v2.RandomHorizontalFlip()])
     else:
-        transforms.extend([v2.Resize(256), v2.CenterCrop(224)])
+        if vert_size > 224:
+            transforms.extend([v2.Resize(512), v2.CenterCrop(horiz_size)])
+        else:
+            transforms.extend([v2.Resize(256), v2.CenterCrop(horiz_size)])
 
     transforms.append(v2.ToDtype(torch.float32, scale=True))
     transforms.append(
@@ -156,13 +160,13 @@ def get_amp_ctx(amp, device):
 
 @torch.no_grad()
 def evaluate_model(model, args):
+    data_config = timm.data.resolve_model_data_config(model)
     model.eval()
-    val_dloader = get_dloader(args, False)
+    val_dloader = get_dloader(args, False, data_config['input_size'])
 
     all_labels = []
     all_preds = []
-
-    for batch in tqdm(val_dloader, dynamic_ncols=True, desc="Evaluating"):
+    for i, batch in enumerate(tqdm(val_dloader, dynamic_ncols=True, desc="Evaluating")):
         all_labels.append(batch["label"].clone())
         if args.full_bf16:
             batch["image"] = batch["image"].bfloat16()
@@ -171,6 +175,8 @@ def evaluate_model(model, args):
 
         with get_amp_ctx(args.amp, _DEVICE):
             all_preds.append(model(batch["image"].to(_DEVICE)).argmax(1).cpu())
+        if i == 2:
+            break  # for faster testing
 
     all_labels = torch.cat(all_labels, dim=0)
     all_preds = torch.cat(all_preds, dim=0)
@@ -207,12 +213,15 @@ if __name__ == "__main__":
         dir="/tmp",
         mode="disabled" if args.project is None else None,
     )
-    dloader = get_dloader(args, True)
-    print(f"Train dataset: {len(dloader.dataset):,} images")
-
     model = timm.create_model(
         args.model, pretrained=True, num_classes=45, **args.model_kwargs
     )
+    data_config = timm.data.resolve_model_data_config(model)
+
+    dloader = get_dloader(args, True, data_config['input_size'])
+    print(f"Train dataset: {len(dloader.dataset):,} images")
+
+    print(f"{data_config=}")
     if args.checkpoint_activations:
         model.set_grad_checkpointing()
     if args.full_bf16:
@@ -220,9 +229,14 @@ if __name__ == "__main__":
     if args.channels_last:
         model.to(memory_format=torch.channels_last)
     model.to(_DEVICE)  # move model to DEVICE after optionally convert it to BF16
+    print(f"{_DEVICE=}")
     if args.compile:
         model.compile(fullgraph=True)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    from torchao.utils import get_model_size_in_bytes
+    model_size = get_model_size_in_bytes(model, ignore_embeddings=True) / 1e9
+    print(f"Model size: {model_size:.2f} GB")
+
 
     if args.optim_cpu_offload == "deepspeed":
         import deepspeed
@@ -326,10 +340,18 @@ if __name__ == "__main__":
                     optim.zero_grad()
 
                 step += 1
-
+                if step == 2:
+                    break  # skip first step to avoid startup overhead in the profile
                 if args.profile and step == 5:
                     break
-
+        peak_mem = getattr(torch, _DEVICE).max_memory_allocated() / 1e9
+        dev_free, dev_total = getattr(torch, _DEVICE).mem_get_info()
+        # memory_stats = torch.memory_stats(_DEVICE)
+        memory_stats = getattr(torch, _DEVICE).memory_stats()
+        # mem_stats = torch.get_device_module(device_type).memory_stats()
+        print(f"Training Max memory used: {peak_mem:.02f} GB")
+        print(f"Training Memory Get Info: {dev_free/1e9:.02f} GB free / {dev_total/1e9:.02f} GB total")
+        print(f"Training Memory Stats: {memory_stats}")
         if args.profile:
             prof.export_chrome_trace("trace.json")
 
