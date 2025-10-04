@@ -212,3 +212,17 @@ Epoch 1/1:   1%|█▏                                                          
 Epoch 1/1:   1%|█▏                                                                                        | 31/2362 [01:46<2:13:34,  3.44s/it]  
 ######################
   python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW8bitAo --batch_size 8 --cosine_lr_scheduler --compile --optim_cpu_offload ao_offload_grads
+################
+BMG 
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler 2>&1 | tee low_mem.log
+Epoch 1/1: 100%|██████████| 2362/2362 [12:56<00:00,  3.04it/s]
+Evaluating: 100%|██████████| 788/788 [00:58<00:00, 13.37it/s]
+Epoch 1/1: val_acc=94.00
+Max memory used: 13.75 GB
+
+python benchmarks/benchmark_low_bit_adam.py --n_epochs 1 --model  "timm/vit_huge_patch14_224.orig_in21k" --amp bf16 --optim AdamW --batch_size 8 --cosine_lr_scheduler --compile 2>&1 | tee low_mem_compile.log
+Epoch 1/1: 100%|██████████| 2362/2362 [13:59<00:00,  2.81it/s]
+Evaluating: 100%|██████████| 788/788 [01:17<00:00, 10.15it/s]
+Epoch 1/1: val_acc=94.37
+Max memory used: 13.23 GB
