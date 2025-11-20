@@ -1,206 +1,191 @@
-import re
-import csv
-import argparse
-from pathlib import Path
-import sys
-import builtins
-import inspect
-_original_print = builtins.print
-
-# State to hold computed column widths once the header is seen
-_table_state = {
-    'active': False,
-    'widths': None,
-    'fields': None,
-}
-
-def _compute_and_print_table_header(header_line: str, rows):
-    fields = header_line.split('\t')
-    widths = [len(f) for f in fields]
-    # rows are dicts with keys matching the header fields
-    for r in rows or []:
-        for i, f in enumerate(fields):
-            val = str(r.get(f, ''))
-            if len(val) > widths[i]:
-                widths[i] = len(val)
-
-    _table_state['active'] = True
-    _table_state['widths'] = widths
-    _table_state['fields'] = fields
-
-    header_parts = [fields[i].ljust(widths[i]) for i in range(len(fields))]
-    _original_print('  '.join(header_parts))
-    _original_print('  '.join('-' * widths[i] for i in range(len(fields))))
-
-def _print_table_row(line: str):
-    values = line.split('\t')
-    parts = []
-    for i, v in enumerate(values):
-        w = _table_state['widths'][i] if i < len(_table_state['widths']) else len(v)
-        parts.append(v.ljust(w))
-    _original_print('  '.join(parts))
-
-def print(*args, **kwargs):
-    # Intercept only the specific tab-separated header/rows printed by the script.
-    try:
-        if args and isinstance(args[0], str) and '\t' in args[0]:
-            s = args[0]
-            # Try to obtain 'rows' from the caller so we can compute column widths for the header
-            caller_frame = inspect.currentframe().f_back
-            caller_rows = None
-            if caller_frame is not None:
-                caller_rows = caller_frame.f_locals.get('rows') or caller_frame.f_globals.get('rows')
-
-            # Heuristic: header line contains tabs and matches number of columns (7 -> 6 tabs)
-            if not _table_state['active'] and s.count('\t') >= 1:
-                # treat the first tabbed line as header
-                _compute_and_print_table_header(s, caller_rows)
-                return
-            if _table_state['active']:
-                _print_table_row(s)
-                return
-    except Exception:
-        # Fall back to normal print on any error
-        pass
-
-    _original_print(*args, **kwargs)
-
-# Replace built-in print in this module so subsequent prints in the script use the table-aware printer.
-builtins.print = print
 #!/usr/bin/env python3
-"""
-Parse benchmarks/benchmark_low_bit_adam_bmg.txt and extract entries for
-calls to benchmarks/benchmark_low_bit_adam.py. Outputs a CSV/table with:
-    model, batch_size, optim, optim_cpu_offload, compile, speed, max_memory
+"""Parse and summarize low-bit benchmark logs."""
 
-Usage:
-    python benchmark_analysis.py --input benchmarks/benchmark_low_bit_adam_bmg.txt --output parsed.csv
-"""
+from __future__ import annotations
+
+import argparse
+import csv
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Iterator, List, Sequence, Tuple
+
 
 CMD_TARGET = "benchmarks/benchmark_low_bit_adam.py"
+FIELD_NAMES = (
+    "model",
+    "batch_size",
+    "optim",
+    "optim_cpu_offload",
+    "compile",
+    "speed",
+    "max_memory",
+)
 
-def normalize_text(text: str) -> str:
-    # Join lines continued with backslash and remove extra newlines so commands
-    # that are split across lines become single lines.
-    text = re.sub(r'\\\s*\n', ' ', text)
-    # Also replace interior newlines that are preceded by whitespace (likely wraps)
-    # with a single space to avoid splitting commands accidentally.
-    return text
 
-def find_command_chunks(text: str):
-    # Find each command line that invokes the target script, and capture the
-    # following log chunk up to the next such command or EOF.
-    cmd_re = re.compile(
-        r'(^|\n)(?P<cmd>python\b[^\n]*' + re.escape(CMD_TARGET) + r'[^\n]*)',
-        flags=re.IGNORECASE
+@dataclass
+class BenchmarkEntry:
+    """Structured representation of a single benchmark run."""
+
+    model: str = ""
+    batch_size: str = ""
+    optim: str = ""
+    optim_cpu_offload: str = ""
+    compile: str = "no"
+    speed: str = ""
+    max_memory: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        return {name: getattr(self, name) for name in FIELD_NAMES}
+
+    def as_row(self) -> List[str]:
+        return [getattr(self, name) for name in FIELD_NAMES]
+
+
+class LogParser:
+    """Parse benchmark log files into structured entries."""
+
+    _COMMAND_PATTERN = re.compile(
+        r"(^|\n)(?P<cmd>python\b[^\n]*" + re.escape(CMD_TARGET) + r"[^\n]*)",
+        flags=re.IGNORECASE,
     )
-    starts = []
-    for m in cmd_re.finditer(text):
-        starts.append((m.start('cmd'), m.end('cmd'), m.group('cmd').strip()))
-    chunks = []
-    for i, (s, e, cmd) in enumerate(starts):
-        end_idx = starts[i+1][0] if i+1 < len(starts) else len(text)
-        chunk = text[e:end_idx]
-        chunks.append((cmd, chunk))
-    return chunks
 
-def extract_flag(cmd: str, name: str):
-    # supports forms: --name value   or --name=value
-    # value may be quoted with single or double quotes
-    pat = re.compile(r'--' + re.escape(name) + r'(?:=|\s+)(?P<val>"[^"]*"|\'[^\']*\'|\S+)')
-    m = pat.search(cmd)
-    if not m:
-        return ""
-    val = m.group('val')
-    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-        return val[1:-1]
-    return val
+    def parse(self, text: str) -> List[BenchmarkEntry]:
+        normalized = self._join_continued_lines(text)
+        chunk_iter = self._iter_command_chunks(normalized)
+        entries = [self._parse_chunk(cmd, chunk) for cmd, chunk in chunk_iter]
+        entries.sort(key=lambda entry: entry.model.lower())
+        return entries
 
-def extract_speed(chunk: str):
-    # Look for "Epoch ... 8.44it/s" style lines and capture the it/s token
-    m = re.search(r'Epoch[^\n\r]*?((?:\d+(?:\.\d+)?)\s*it/s)', chunk, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
-    # fallback: any standalone "xx.xx it/s"
-    m2 = re.search(r'(\d+(?:\.\d+)?)\s*it/s', chunk, flags=re.IGNORECASE)
-    if m2:
-        return m2.group(0).strip()
-    return ""
+    @staticmethod
+    def _join_continued_lines(text: str) -> str:
+        # Merge commands that use trailing "\" continuation characters.
+        text = re.sub(r"\\\s*\n", " ", text)
+        return text
 
-def extract_max_memory(chunk: str):
-    # Look for "Max memory used: 1.53 GB" or similar
-    m = re.search(r'Max memory used:\s*([0-9]+(?:\.[0-9]+)?\s*[GMK]B)', chunk, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
-    return ""
+    def _iter_command_chunks(self, text: str) -> Iterator[Tuple[str, str]]:
+        matches = list(self._COMMAND_PATTERN.finditer(text))
+        for index, match in enumerate(matches):
+            start, end = match.start("cmd"), match.end("cmd")
+            command = match.group("cmd").strip()
+            next_start = matches[index + 1].start("cmd") if index + 1 < len(matches) else len(text)
+            yield command, text[end:next_start]
 
-def extract_compile_flag(cmd: str) -> str:
-    # Detect presence of --compile. If given with a value that is false-like, return 'no'.
-    m = re.search(r'(?<!\S)--compile(?:\b|=)', cmd)
-    if not m:
-        return "no"
-    # check for forms like --compile=False or --compile false
-    mval = re.search(r'--compile(?:=|\s+)(?P<val>\S+)', cmd)
-    if mval:
-        val = mval.group('val').strip().strip('"').strip("'").lower()
-        if val in ('0', 'false', 'no', 'off'):
+    def _parse_chunk(self, command: str, chunk: str) -> BenchmarkEntry:
+        return BenchmarkEntry(
+            model=self._extract_flag(command, "model"),
+            batch_size=self._extract_flag(command, "batch_size")
+            or self._extract_flag(command, "batch-size"),
+            optim=self._extract_flag(command, "optim"),
+            optim_cpu_offload=self._extract_flag(command, "optim_cpu_offload"),
+            compile=self._extract_compile_flag(command),
+            speed=self._extract_speed(chunk),
+            max_memory=self._extract_max_memory(chunk),
+        )
+
+    @staticmethod
+    def _extract_flag(command: str, name: str) -> str:
+        pattern = re.compile(
+            r"--" + re.escape(name) + r"(?:=|\s+)(?P<value>\"[^\"]*\"|'[^']*'|\S+)"
+        )
+        match = pattern.search(command)
+        if not match:
+            return ""
+        value = match.group("value")
+        if value.startswith(("\"", "'")) and value.endswith(("\"", "'")):
+            return value[1:-1]
+        return value
+
+    @staticmethod
+    def _extract_speed(chunk: str) -> str:
+        match = re.search(r"Epoch[^\n\r]*?((?:\d+(?:\.\d+)?)\s*it/s)", chunk, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        fallback = re.search(r"(\d+(?:\.\d+)?)\s*it/s", chunk, flags=re.IGNORECASE)
+        return fallback.group(0).strip() if fallback else ""
+
+    @staticmethod
+    def _extract_max_memory(chunk: str) -> str:
+        match = re.search(r"Max memory used:\s*([0-9]+(?:\.[0-9]+)?\s*[GMK]B)", chunk, flags=re.IGNORECASE)
+        return match.group(1).strip() if match else ""
+
+    @staticmethod
+    def _extract_compile_flag(command: str) -> str:
+        if not re.search(r"(?<!\S)--compile(?:\b|=)", command):
             return "no"
-        return "yes"
-    return "yes"
+        match = re.search(r"--compile(?:=|\s+)(?P<value>\S+)", command)
+        if not match:
+            return "yes"
+        value = match.group("value").strip().strip("\"").strip("'").lower()
+        return "no" if value in {"0", "false", "no", "off"} else "yes"
 
-def main():
-    p = argparse.ArgumentParser()
-    p.add_argument('--input', '-i', type=Path, default=Path('benchmark_low_bit_adam_bmg.txt'))
-    p.add_argument('--output', '-o', type=Path, default=Path('benchmark_low_bit_adam_parsed.csv'))
-    args = p.parse_args()
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--input",
+        "-i",
+        type=Path,
+        default=Path("benchmark_low_bit_adam_bmg.txt"),
+        help="Benchmark log to analyze.",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=Path("benchmark_low_bit_adam_parsed.csv"),
+        help="CSV file that will store parsed entries.",
+    )
+    return parser
+
+
+def write_csv(entries: Sequence[BenchmarkEntry], destination: Path) -> None:
+    with destination.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, FIELD_NAMES)
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow(entry.as_dict())
+
+
+def format_table(entries: Sequence[BenchmarkEntry]) -> str:
+    if not entries:
+        return ""
+
+    column_widths = [len(name) for name in FIELD_NAMES]
+    for entry in entries:
+        for index, value in enumerate(entry.as_row()):
+            column_widths[index] = max(column_widths[index], len(value))
+
+    def pad_row(values: Iterable[str]) -> str:
+        return "  ".join(value.ljust(column_widths[idx]) for idx, value in enumerate(values))
+
+    header = pad_row(FIELD_NAMES)
+    separator = pad_row("-" * width for width in column_widths)
+    rows = [pad_row(entry.as_row()) for entry in entries]
+    return "\n".join([header, separator, *rows])
+
+
+def main() -> None:
+    arg_parser = build_arg_parser()
+    args = arg_parser.parse_args()
 
     if not args.input.exists():
         print(f"Input file not found: {args.input}", file=sys.stderr)
         sys.exit(2)
 
-    text = args.input.read_text(encoding='utf-8', errors='ignore')
-    text = normalize_text(text)
-    cmd_chunks = find_command_chunks(text)
+    log_text = args.input.read_text(encoding="utf-8", errors="ignore")
+    entries = LogParser().parse(log_text)
 
-    rows = []
-    for cmd, chunk in cmd_chunks:
-        model = extract_flag(cmd, 'model')
-        batch = extract_flag(cmd, 'batch_size') or extract_flag(cmd, 'batch-size')
-        optim_name = extract_flag(cmd, 'optim')
-        optim_off = extract_flag(cmd, 'optim_cpu_offload')
-        compile_present = extract_compile_flag(cmd)
-        speed = extract_speed(chunk)
-        max_mem = extract_max_memory(chunk)
-        rows.append({
-            'model': model,
-            'batch_size': batch,
-            'optim': optim_name,
-            'optim_cpu_offload': optim_off,
-            'compile': compile_present,
-            'speed': speed,
-            'max_memory': max_mem
-        })
-
-    # sort rows by model name (case-insensitive)
-    rows.sort(key=lambda r: (r.get('model') or '').strip().lower())
-
-    # write CSV
-    fieldnames = ['model', 'batch_size', 'optim', 'optim_cpu_offload', 'compile', 'speed', 'max_memory']
-    with args.output.open('w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in rows:
-            writer.writerow(r)
-
-    # print quick table to stdout
-    if rows:
-        print(f"Wrote {len(rows)} rows to {args.output}")
-        print("model\tbatch_size\toptim\toptim_cpu_offload\tcompile\tspeed\tmax_memory")
-        for r in rows:
-            print(f"{r['model']}\t{r['batch_size']}\t{r['optim']}\t{r['optim_cpu_offload']}\t{r['compile']}\t{r['speed']}\t{r['max_memory']}")
-    else:
+    if not entries:
         print("No matching commands found.", file=sys.stderr)
         sys.exit(1)
 
-if __name__ == '__main__':
+    write_csv(entries, args.output)
+
+    print(f"Wrote {len(entries)} rows to {args.output}")
+    print(format_table(entries))
+
+
+if __name__ == "__main__":
     main()
