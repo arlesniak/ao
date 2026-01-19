@@ -25,9 +25,12 @@ from torchao.float8.float8_linear_utils import (
 from torchao.float8.float8_utils import IS_ROCM, compute_error
 from torchao.testing.training.test_utils import get_test_float8_linear_config
 from torchao.utils import (
+    get_available_devices,
     is_sm_at_least_89,
     is_sm_at_least_90,
 )
+
+_DEVICES = get_available_devices()
 
 torch.manual_seed(0)
 
@@ -78,7 +81,7 @@ class FeedForward(nn.Module):
 
 
 class TestFloat8NumericsIntegrationTest:
-    def _test_impl(self, config: Float8LinearConfig) -> None:
+    def _test_impl(self, config: Float8LinearConfig, device: str) -> None:
         data_dtype = torch.bfloat16
         # LLaMa 3 70B shapes
         model_ref = (
@@ -88,7 +91,7 @@ class TestFloat8NumericsIntegrationTest:
                 multiple_of=1024,
                 ffn_dim_multiplier=1.3,
             )
-            .cuda()
+            .to(device)
             .to(data_dtype)
         )
 
@@ -109,8 +112,8 @@ class TestFloat8NumericsIntegrationTest:
         # logic of delayed scaling behaves as dynamic scaling
         # TODO(future PR): delete ^, since we deleted delayed scaling
         shape = (1, 8192, 4096)
-        data1 = torch.randn(*shape, device="cuda", dtype=data_dtype)
-        data2 = torch.randn(*shape, device="cuda", dtype=data_dtype)
+        data1 = torch.randn(*shape, device=device, dtype=data_dtype)
+        data2 = torch.randn(*shape, device=device, dtype=data_dtype)
 
         model_ref(data1).sum().backward()
         # zero out grads without stepping, since we just want to compare grads
@@ -153,23 +156,26 @@ class TestFloat8NumericsIntegrationTest:
         "scaling_type_grad_output",
         [ScalingType.DYNAMIC],
     )
-    @pytest.mark.skipif(
-        not is_sm_at_least_89(), reason="requires SM89 compatible machine"
-    )
+    @pytest.mark.parametrize("device", _DEVICES)
     @pytest.mark.skipif(IS_ROCM, reason="test doesn't currently work on the ROCm stack")
     def test_encoder_fw_bw_from_config_params(
         self,
         scaling_type_input: ScalingType,
         scaling_type_weight: ScalingType,
         scaling_type_grad_output: ScalingType,
+        device: str,
     ):
+        if device == "cpu":
+            pytest.skip("CPU not supported")
+        if device == "cuda" and not is_sm_at_least_89():
+            pytest.skip("requires SM89 compatible machine")
         config = get_test_float8_linear_config(
             scaling_type_input,
             scaling_type_weight,
             scaling_type_grad_output,
             emulate=False,
         )
-        self._test_impl(config)
+        self._test_impl(config, device)
 
     @pytest.mark.parametrize(
         "recipe_name",
@@ -178,16 +184,19 @@ class TestFloat8NumericsIntegrationTest:
             Float8LinearRecipeName.ROWWISE_WITH_GW_HP,
         ],
     )
-    @pytest.mark.skipif(
-        not is_sm_at_least_90(), reason="requires SM90 compatible machine"
-    )
+    @pytest.mark.parametrize("device", _DEVICES)
     @pytest.mark.skipif(IS_ROCM, reason="test doesn't currently work on the ROCm stack")
     def test_encoder_fw_bw_from_recipe(
         self,
         recipe_name: str,
+        device: str,
     ):
+        if device == "cpu":
+            pytest.skip("CPU not supported")
+        if device == "cuda" and not is_sm_at_least_90():
+            pytest.skip("requires SM90 compatible machine")
         config = Float8LinearConfig.from_recipe_name(recipe_name)
-        self._test_impl(config)
+        self._test_impl(config, device)
 
 
 if __name__ == "__main__":
