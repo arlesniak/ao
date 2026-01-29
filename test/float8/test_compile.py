@@ -46,7 +46,7 @@ def _test_compile_base(
     fullgraph: bool,
     config: Float8LinearConfig,
     dtype: torch.dtype,
-    device: str,
+    device: torch.device,
 ):
     random.seed(0)
     torch.manual_seed(0)
@@ -98,7 +98,7 @@ def test_eager_only(
     scaling_type_weight: ScalingType,
     scaling_type_grad_output: ScalingType,
     dtype: torch.dtype,
-    device: str,
+    device: torch.device,
 ):
     if device == "cpu":
         pytest.skip("CPU not supported")
@@ -138,7 +138,7 @@ def test_aot_eager(
     scaling_type_weight: ScalingType,
     scaling_type_grad_output: ScalingType,
     dtype: torch.dtype,
-    device: str,
+    device: torch.device,
 ):
     if device == "cpu":
         pytest.skip("CPU not supported")
@@ -182,7 +182,7 @@ def test_inductor_from_config_params(
     scaling_type_weight: ScalingType,
     scaling_type_grad_output: ScalingType,
     dtype: torch.dtype,
-    device: str,
+    device: torch.device,
 ):
     if device == "cpu":
         pytest.skip("CPU not supported")
@@ -216,7 +216,7 @@ def test_inductor_from_config_params(
     ],
 )
 @pytest.mark.parametrize("device", _DEVICES)
-def test_inductor_from_recipe(recipe_name, device: str):
+def test_inductor_from_recipe(recipe_name, device: torch.device):
     if device == "cpu":
         pytest.skip("CPU not supported")
     if device == "cuda" and not is_sm_at_least_90():
@@ -253,7 +253,7 @@ class TestGraphBreaks(DynamoTestCase):
             return x_fp8
 
     @pytest.mark.parametrize("device", _DEVICES)
-    def test_float8_with_graph_break_in_the_middle(self, device: str):
+    def test_float8_with_graph_break_in_the_middle(self, device: torch.device):
         if device == "cpu":
             pytest.skip("CPU not supported")
         if device == "cuda" and not is_sm_at_least_90():
@@ -270,7 +270,7 @@ class TestGraphBreaks(DynamoTestCase):
         torch.testing.assert_close(y_eager, y_compiled)
 
     @pytest.mark.parametrize("device", _DEVICES)
-    def test_float8_graph_input(self, device: str):
+    def test_float8_graph_input(self, device: torch.device):
         if device == "cpu":
             pytest.skip("CPU not supported")
         if device == "cuda" and not is_sm_at_least_89():
@@ -295,7 +295,7 @@ class TestGraphBreaks(DynamoTestCase):
         torch.testing.assert_close(y2_eager, y2_compiled)
 
     @pytest.mark.parametrize("device", _DEVICES)
-    def test_float8_graph_output(self, device: str):
+    def test_float8_graph_output(self, device: torch.device):
         if device == "cpu":
             pytest.skip("CPU not supported")
         if device == "cuda" and not is_sm_at_least_89():
@@ -363,7 +363,7 @@ class capture_stderr(list):
 )
 @pytest.mark.parametrize("device", _DEVICES)
 def test_dynamic_scale_numeric_parity(
-    dtype: torch.dtype, round_scales_to_power_of_2: bool, device: str
+    dtype: torch.dtype, round_scales_to_power_of_2: bool, device: torch.device
 ):
     if device == "cpu":
         pytest.skip("CPU not supported")
