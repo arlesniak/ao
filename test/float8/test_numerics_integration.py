@@ -8,6 +8,7 @@
 
 import copy
 from typing import Optional
+import unittest
 
 import pytest
 import torch
@@ -25,12 +26,12 @@ from torchao.float8.float8_linear_utils import (
 from torchao.float8.float8_utils import IS_ROCM, compute_error
 from torchao.testing.training.test_utils import get_test_float8_linear_config
 from torchao.utils import (
-    get_available_devices,
+    get_current_accelerator_device,
     is_sm_at_least_89,
     is_sm_at_least_90,
 )
 
-_DEVICES = get_available_devices()
+_DEVICE = [str(get_current_accelerator_device())]
 
 torch.manual_seed(0)
 
@@ -156,7 +157,12 @@ class TestFloat8NumericsIntegrationTest:
         "scaling_type_grad_output",
         [ScalingType.DYNAMIC],
     )
-    @pytest.mark.parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_89(),
+        "requires SM89 compatible machine",
+    )
+    @pytest.mark.parametrize("device", _DEVICE)
     @pytest.mark.skipif(IS_ROCM, reason="test doesn't currently work on the ROCm stack")
     def test_encoder_fw_bw_from_config_params(
         self,
@@ -165,10 +171,6 @@ class TestFloat8NumericsIntegrationTest:
         scaling_type_grad_output: ScalingType,
         device: str,
     ):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("requires SM89 compatible machine")
         config = get_test_float8_linear_config(
             scaling_type_input,
             scaling_type_weight,
@@ -184,17 +186,18 @@ class TestFloat8NumericsIntegrationTest:
             Float8LinearRecipeName.ROWWISE_WITH_GW_HP,
         ],
     )
-    @pytest.mark.parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_90(),
+        "requires SM90 compatible machine",
+    )
+    @pytest.mark.parametrize("device", _DEVICE)
     @pytest.mark.skipif(IS_ROCM, reason="test doesn't currently work on the ROCm stack")
     def test_encoder_fw_bw_from_recipe(
         self,
         recipe_name: str,
         device: str,
     ):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_90():
-            pytest.skip("requires SM90 compatible machine")
         config = Float8LinearConfig.from_recipe_name(recipe_name)
         self._test_impl(config, device)
 
