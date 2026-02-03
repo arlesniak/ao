@@ -14,6 +14,10 @@ import torch
 import torch.nn as nn
 from torch._dynamo.test_case import TestCase as DynamoTestCase
 from torch._dynamo.testing import CompileCounterWithBackend
+from torch.testing._internal.common_utils import (
+    instantiate_parametrized_tests,
+    parametrize,
+)
 
 from torchao.float8.config import (
     CastConfig,
@@ -33,13 +37,12 @@ from torchao.float8.float8_training_tensor import (
 )
 from torchao.testing.training.test_utils import get_test_float8_linear_config
 from torchao.utils import (
-    get_available_devices,
+    get_current_accelerator_device,
     is_sm_at_least_89,
     is_sm_at_least_90,
 )
 
-_DEVICES = get_available_devices()
-
+_DEVICE = [str(get_current_accelerator_device())]
 
 def _test_compile_base(
     backend: str,
@@ -78,6 +81,7 @@ def _test_compile_base(
     torch.testing.assert_close(x.grad, x_ref.grad, atol=8e-2, rtol=8e-2)
 
 
+@unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
 @pytest.mark.parametrize("fullgraph", [True])
 @pytest.mark.parametrize("scaling_type_input", [ScalingType.DYNAMIC])
 @pytest.mark.parametrize(
@@ -90,7 +94,7 @@ def _test_compile_base(
 )
 @pytest.mark.parametrize("emulate", [False, True] if is_sm_at_least_89() else [True])
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", _DEVICES)
+@pytest.mark.parametrize("device", _DEVICE)
 def test_eager_only(
     fullgraph,
     emulate: bool,
@@ -100,8 +104,6 @@ def test_eager_only(
     dtype: torch.dtype,
     device: torch.device,
 ):
-    if device == "cpu":
-        pytest.skip("CPU not supported")
     torch._dynamo.reset()
     config = get_test_float8_linear_config(
         scaling_type_input,
@@ -117,7 +119,7 @@ def test_eager_only(
         device,
     )
 
-
+@unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
 @pytest.mark.parametrize("fullgraph", [True])
 @pytest.mark.parametrize("emulate", [False, True] if is_sm_at_least_89() else [True])
 @pytest.mark.parametrize("scaling_type_input", [ScalingType.DYNAMIC])
@@ -130,7 +132,7 @@ def test_eager_only(
     [ScalingType.DYNAMIC],
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", _DEVICES)
+@pytest.mark.parametrize("device", _DEVICE)
 def test_aot_eager(
     fullgraph,
     emulate: bool,
@@ -140,8 +142,6 @@ def test_aot_eager(
     dtype: torch.dtype,
     device: torch.device,
 ):
-    if device == "cpu":
-        pytest.skip("CPU not supported")
     torch._dynamo.reset()
     config = get_test_float8_linear_config(
         scaling_type_input,
@@ -158,6 +158,11 @@ def test_aot_eager(
     )
 
 
+@unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+@unittest.skipIf(
+    torch.cuda.is_available() and not is_sm_at_least_89(),
+    "CUDA with float8 support not available",
+)
 @pytest.mark.parametrize("fullgraph", [True])
 @pytest.mark.parametrize("emulate", [False])
 @pytest.mark.parametrize("scaling_type_input", [ScalingType.DYNAMIC])
@@ -169,12 +174,8 @@ def test_aot_eager(
     "scaling_type_grad_output",
     [ScalingType.DYNAMIC],
 )
-@unittest.skipIf(
-    not torch.cuda.is_available() or not is_sm_at_least_89(),
-    "CUDA with float8 support not available",
-)
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", _DEVICES)
+@pytest.mark.parametrize("device", _DEVICE)
 def test_inductor_from_config_params(
     fullgraph,
     emulate: bool,
@@ -184,10 +185,6 @@ def test_inductor_from_config_params(
     dtype: torch.dtype,
     device: torch.device,
 ):
-    if device == "cpu":
-        pytest.skip("CPU not supported")
-    if device == "cuda" and not is_sm_at_least_89():
-        pytest.skip("CUDA with float8 support not available")
     torch._dynamo.reset()
     config = get_test_float8_linear_config(
         scaling_type_input,
@@ -208,6 +205,11 @@ def test_inductor_from_config_params(
 # them, so this function factors out some of the recipes which are annoying
 # to combine with the main testing function.
 # TODO(future PR): make this cleaner.
+@unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+@unittest.skipIf(
+    torch.cuda.is_available() and not is_sm_at_least_90(),
+    "CUDA with capability 9.0 or greater not available",
+)
 @pytest.mark.parametrize(
     "recipe_name",
     [
@@ -215,12 +217,8 @@ def test_inductor_from_config_params(
         Float8LinearRecipeName.ROWWISE_WITH_GW_HP,
     ],
 )
-@pytest.mark.parametrize("device", _DEVICES)
+@pytest.mark.parametrize("device", _DEVICE)
 def test_inductor_from_recipe(recipe_name, device: torch.device):
-    if device == "cpu":
-        pytest.skip("CPU not supported")
-    if device == "cuda" and not is_sm_at_least_90():
-        pytest.skip("CUDA with capability 9.0 or greater not available")
     torch._dynamo.reset()
     config = Float8LinearConfig.from_recipe_name(recipe_name)
     fullgraph = True
@@ -234,6 +232,7 @@ def test_inductor_from_recipe(recipe_name, device: torch.device):
     )
 
 
+@instantiate_parametrized_tests
 class TestGraphBreaks(DynamoTestCase):
     class MockLinear(torch.nn.Module):
         def __init__(self, graph_break: bool):
@@ -252,12 +251,11 @@ class TestGraphBreaks(DynamoTestCase):
                 return x_hp
             return x_fp8
 
-    @pytest.mark.parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(torch.cuda.is_available() and not is_sm_at_least_90(),
+                     "CUDA with capability 9.0 or greater not available")
+    @parametrize("device", _DEVICE)
     def test_float8_with_graph_break_in_the_middle(self, device: torch.device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_90():
-            pytest.skip("CUDA with capability 9.0 or greater not available")
         """Test that having Float8TrainingTensor object at the boundary of a subgraph"""
         cnts = CompileCounterWithBackend("inductor")
         mod = self.MockLinear(graph_break=True).to(device)
@@ -269,13 +267,12 @@ class TestGraphBreaks(DynamoTestCase):
         self.assertEqual(cnts.frame_count, 2, "Compiled graph should have 2 frames!")
         torch.testing.assert_close(y_eager, y_compiled)
 
-    @pytest.mark.parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(torch.cuda.is_available() and not is_sm_at_least_89(), 
+                     "CUDA with float8 support not available")
+    @parametrize("device", _DEVICE)
     def test_float8_graph_input(self, device: torch.device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA with float8 support not available")
-        """Test that having Float8TrainingTensor object as a graph input"""
+        # """Test that having Float8TrainingTensor object as a graph input"""
 
         def to_float(x):
             return x.to_original_precision()
@@ -294,12 +291,11 @@ class TestGraphBreaks(DynamoTestCase):
         )
         torch.testing.assert_close(y2_eager, y2_compiled)
 
-    @pytest.mark.parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(torch.cuda.is_available() and not is_sm_at_least_89(), 
+                     "CUDA with float8 support not available")
+    @parametrize("device", _DEVICE)
     def test_float8_graph_output(self, device: torch.device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA with float8 support not available")
         """Test that having Float8TrainingTensor object as a graph output works"""
         cnts = CompileCounterWithBackend("inductor")
         mod = self.MockLinear(graph_break=False).to(device)
@@ -342,10 +338,6 @@ class capture_stderr(list):
         sys.stderr = self.sys_stderr
 
 
-@unittest.skipIf(
-    not is_sm_at_least_89(),
-    "CUDA not available",
-)
 @pytest.mark.parametrize(
     "dtype",
     [
@@ -361,14 +353,14 @@ class capture_stderr(list):
         False,
     ],
 )
-@pytest.mark.parametrize("device", _DEVICES)
+@unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+@unittest.skipIf(
+    torch.cuda.is_available() and not is_sm_at_least_89(),
+    "CUDA not available",
+)
+@pytest.mark.parametrize("device", _DEVICE)
 def test_dynamic_scale_numeric_parity(
-    dtype: torch.dtype, round_scales_to_power_of_2: bool, device: torch.device
-):
-    if device == "cpu":
-        pytest.skip("CPU not supported")
-    if device == "cuda" and not is_sm_at_least_89():
-        pytest.skip("CUDA not available")
+    dtype: torch.dtype, round_scales_to_power_of_2: bool, device: torch.device):
     scaling_type_weight = ScalingType.DYNAMIC
     torch.manual_seed(42)
     hp_tensor1 = torch.randn(16, 16, device=device, dtype=dtype)
