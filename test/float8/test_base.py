@@ -52,6 +52,7 @@ from torchao.testing.training.test_utils import get_test_float8_linear_config
 from torchao.testing.utils import skip_if_rocm
 from torchao.utils import (
     get_available_devices,
+    get_current_accelerator_device,
     is_MI300,
     is_ROCM,
     is_sm_at_least_89,
@@ -59,6 +60,7 @@ from torchao.utils import (
 )
 
 _DEVICES = get_available_devices()
+_GPU_DEVICE = [str(get_current_accelerator_device())]
 
 random.seed(0)
 torch.manual_seed(0)
@@ -241,14 +243,13 @@ class TestFloat8TrainingTensor(TestCase):
             (ScalingGranularity.TENSORWISE, ScalingGranularity.AXISWISE),
         ],
     )
-
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_90(),
+        "Requires CUDA capability >= 9.0",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_axiswise_gemm(self, a_shape, a_granularity, b_granularity, device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_90():
-            pytest.skip("Requires CUDA capability >= 9.0")
-
         a = torch.randn(*a_shape, dtype=torch.bfloat16, device=device)
         b = torch.randn(64, 32, dtype=torch.bfloat16, device=device)
 
@@ -390,7 +391,12 @@ class TestFloat8Linear(TestCase):
         "linear_dtype", [torch.bfloat16, torch.float16, torch.float32]
     )
     @skip_if_rocm("ROCm enablement in progress")
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_90(),
+        "Requires CUDA capability >= 9.0",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_linear_from_recipe(
         self,
         recipe_name,
@@ -399,11 +405,6 @@ class TestFloat8Linear(TestCase):
         linear_bias: bool,
         device,
     ):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_90():
-            pytest.skip("CUDA capability < 9.0")
-
         x = torch.randn(*x_shape, device=device, dtype=linear_dtype)
         m_ref = nn.Linear(16, 32, bias=linear_bias, device=device, dtype=linear_dtype)
         config = Float8LinearConfig.from_recipe_name(recipe_name)
@@ -427,7 +428,8 @@ class TestFloat8Linear(TestCase):
             Float8LinearRecipeName.ROWWISE_WITH_GW_HP,
         ],
     )
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @parametrize("device", _GPU_DEVICE)
     def test_autocast_outputs(
         self,
         emulate: bool,
@@ -435,9 +437,6 @@ class TestFloat8Linear(TestCase):
         recipe_name: Float8LinearRecipeName,
         device,
     ):
-        if device == "cpu":
-            pytest.skip("Autocast test requires device")
-
         m_ref = nn.Sequential(
             nn.Linear(32, 32, device=device, dtype=linear_dtype),
             nn.Linear(32, 32, device=device, dtype=linear_dtype),
@@ -476,26 +475,26 @@ class TestFloat8Linear(TestCase):
         s = m.__repr__()
         assert "i:dyn_ten_e4m3,w:dyn_ten_e4m3,go:dyn_ten_e5m2" in s
 
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_89(),
+        "CUDA with float8 support not available",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_inference_mode(self, device):
-        if device == "cpu":
-            pytest.skip("Skipping inference mode test on CPU")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA 8.9 not available")
-
         x = torch.randn(32, 32, device=device)
         m = nn.Sequential(nn.Linear(32, 32)).to(device)
         m = convert_to_float8_training(m)
         with torch.inference_mode(mode=True):
             m(x)
 
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_89(),
+        "CUDA with float8 support not available",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_quantize(self, device):
-        if device == "cpu":
-            pytest.skip("Skipping quantize test on CPU")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA arch 8.9 not available")
-
         x = torch.randn(32, 32, device=device)
         m = nn.Sequential(nn.Linear(32, 32)).to(device)
         m = convert_to_float8_training(m)
@@ -515,13 +514,13 @@ class TestScaledMM(TestCase):
         "base_dtype", [torch.float16, torch.bfloat16, torch.float32]
     )
     @parametrize("use_fast_accum", [True, False])
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_89(),
+        "CUDA with float8 support not available",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_scaled_mm_vs_emulated(self, base_dtype, use_fast_accum, device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA not available")
-
         torch.manual_seed(42)
         input_dtype = e4m3_dtype
         output_dtype = base_dtype
@@ -559,13 +558,13 @@ class TestScaledMM(TestCase):
             atol, rtol = 3e-3, 3e-3
         torch.testing.assert_close(out_scaled_mm, out_emulated, atol=atol, rtol=rtol)
 
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_89(),
+        "CUDA with float8 support not available",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_different_configs_error(self, device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA not available")
-
         x_fp32 = torch.randn(16, 16, device=device)
         x_scale = torch.tensor(1.0, device=device)
         fp8_dtype = e4m3_dtype
@@ -603,13 +602,13 @@ class TestScaledMM(TestCase):
         "base_dtype", [torch.float16, torch.bfloat16, torch.float32]
     )
     @parametrize("use_fast_accum", [True, False])
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @unittest.skipIf(
+        torch.cuda.is_available() and not is_sm_at_least_89(),
+        "CUDA with float8 support not available",
+    )
+    @parametrize("device", _GPU_DEVICE)
     def test_pad_inner_dim(self, base_dtype, use_fast_accum, device):
-        if device == "cpu":
-            pytest.skip("CPU not supported")
-        if device == "cuda" and not is_sm_at_least_89():
-            pytest.skip("CUDA not available")
-
         torch.manual_seed(42)
         input_dtype = e4m3_dtype
         compare_type = torch.float32
@@ -702,10 +701,9 @@ class TestNumerics(TestCase):
         "float8_dtype",
         [torch.float8_e4m3fn,torch.float8_e5m2,torch.float8_e4m3fnuz,torch.float8_e5m2fnuz],
     )
-    @parametrize("device", _DEVICES)
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
+    @parametrize("device", _GPU_DEVICE)
     def test_small_amax_float16(self, float8_dtype, device):
-        if device == "cuda" and not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
         # If we calculate scale naively with FP8_MAX_POS / amax,
         # the result may not be representable in fp16. Verify that
         # the way we calculate scales actually works for tensors with
