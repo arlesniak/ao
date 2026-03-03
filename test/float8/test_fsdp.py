@@ -46,7 +46,7 @@ def setup(rank, world_size):
     os.environ["MASTER_PORT"] = "12355"
 
     # initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    dist.init_process_group("xccl", rank=rank, world_size=world_size)
 
 
 def cleanup():
@@ -67,7 +67,7 @@ def get_model(K, N, base_dtype=torch.float32):
 # and modified
 def fsdp_main(rank, world_size, args):
     setup(rank, world_size)
-    torch.cuda.set_device(rank)
+    torch.xpu.set_device(rank)
     print("args", args)
 
     emulate, base_dtype, compile = args
@@ -97,12 +97,12 @@ def fsdp_main(rank, world_size, args):
     # populate the buffers
     # TODO(future PR): delete ^, since we deleted delayed scaling
     ref_input_global = [
-        torch.randn(B, M, K).cuda().to(base_dtype),
-        torch.randn(B, M, K).cuda().to(base_dtype),
+        torch.randn(B, M, K).xpu().to(base_dtype),
+        torch.randn(B, M, K).xpu().to(base_dtype),
     ]
     ref_grad_global = [
-        torch.randn(B, M, N).cuda().to(base_dtype),
-        torch.randn(B, M, N).cuda().to(base_dtype),
+        torch.randn(B, M, N).xpu().to(base_dtype),
+        torch.randn(B, M, N).xpu().to(base_dtype),
     ]
     ref_input_local = []
     ref_grad_local = []
@@ -177,16 +177,18 @@ def run(compile_fsdp: bool = False):
     base_dtype = torch.bfloat16
 
     emulate = False
-    if not torch.cuda.is_available():
-        warnings.warn("CUDA not available, running in emulation_mode")
+    # if not torch.xpu.is_available():
+    #     warnings.warn("xpu not available, running in emulation_mode")
+    #     emulate = True
+    # elif torch.xpu.get_device_capability() < (8, 9):
+    #     warnings.warn(
+    #         f"xpu capability {torch.xpu.get_device_capability()} < (8.9), running in emulation mode"
+    #     )
+    #     emulate = True
+    if not torch.xpu.is_available():
+        warnings.warn("XPU not available, running in emulation_mode")
         emulate = True
-    elif torch.cuda.get_device_capability() < (8, 9):
-        warnings.warn(
-            f"CUDA capability {torch.cuda.get_device_capability()} < (8.9), running in emulation mode"
-        )
-        emulate = True
-
-    WORLD_SIZE = torch.cuda.device_count()
+    WORLD_SIZE = torch.xpu.device_count()
     args = (emulate, base_dtype, compile_fsdp)
     mp.spawn(fsdp_main, args=(WORLD_SIZE, args), nprocs=WORLD_SIZE, join=True)
 

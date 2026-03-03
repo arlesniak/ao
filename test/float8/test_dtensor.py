@@ -47,11 +47,11 @@ torch.set_float32_matmul_precision("high")
 
 def setup_distributed():
     world_size = int(os.environ.get("WORLD_SIZE", -1))
-    device_mesh = init_device_mesh("cuda", (world_size,))
+    device_mesh = init_device_mesh("xpu", (world_size,))
     # seed must be the same in all processes
     torch.manual_seed(1)
     local_rank = torch.distributed.get_rank()
-    torch.cuda.set_device(local_rank)
+    torch.xpu.set_device(local_rank)
     return device_mesh
 
 
@@ -208,7 +208,7 @@ def _test_fp8_mlp_tensor_parallelism_compile(mesh: DeviceMesh, size=32):
 
 def _test_distribute_fsdp_tensor_subclass(tp_mesh: DeviceMesh):
     torch.manual_seed(42)
-    model = Transformer(ModelArgs(dropout_p=0.0, weight_tying=False)).cuda()
+    model = Transformer(ModelArgs(dropout_p=0.0, weight_tying=False)).xpu()
     convert_to_float8_training(
         model,
         config=Float8LinearConfig(
