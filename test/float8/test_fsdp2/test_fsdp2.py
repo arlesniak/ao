@@ -47,11 +47,11 @@ from torchao.testing.training.fsdp2_utils import (
 )
 from torchao.utils import is_MI300, is_MI350, is_sm_at_least_89
 
-if not (is_sm_at_least_89() or is_MI300() or is_MI350()):
-    pytest.skip(
-        "Requires FP8-capable GPU (CUDA SM89+, MI300, or MI350)",
-        allow_module_level=True,
-    )
+#if not is_sm_at_least_89():
+#    pytest.skip("Unsupported CUDA device capability version", allow_module_level=True)
+
+if torch.version.hip is not None:
+    pytest.skip("ROCm enablement in progress", allow_module_level=True)
 
 
 class TestFloat8Common:
@@ -63,13 +63,13 @@ class TestFloat8Common:
 
     def init_single_module(self) -> nn.Module:
         torch.manual_seed(42)
-        module = nn.Linear(16, 16, device="cuda")
+        module = nn.Linear(16, 16, device="xpu")
         self.broadcast_module(module)
         return module
 
     def init_multi_module(self) -> nn.Module:
         torch.manual_seed(42)
-        module = nn.Sequential(*[MLP(16, device="cuda") for _ in range(3)])
+        module = nn.Sequential(*[MLP(16, device="xpu") for _ in range(3)])
         self.broadcast_module(module)
         return module
 
@@ -103,7 +103,7 @@ class TestFloat8Common:
 
     def get_local_inp(self, dtype: torch.dtype = torch.float32):
         torch.manual_seed(42)
-        global_inp = torch.randn((16 * self.world_size, 16), device="cuda", dtype=dtype)
+        global_inp = torch.randn((16 * self.world_size, 16), device="xpu", dtype=dtype)
         dist.broadcast(global_inp, src=0)
         return global_inp.view(self.world_size, -1)[self.rank].view(16, 16)
 
@@ -179,7 +179,7 @@ class TestFloat8MultiProcess(FSDPTest, TestFloat8Common):
         ref_optim = torch.optim.Adam(ref_module.parameters(), lr=1e-2)
         optim = torch.optim.Adam(module.parameters(), lr=1e-2, foreach=True)
         local_inp = torch.randint(
-            0, ref_module.tok_embeddings.weight.size(0), (16, 16), device="cuda"
+            0, ref_module.tok_embeddings.weight.size(0), (16, 16), device="xpu"
         )
         check_parity_no_mp(
             self,
@@ -204,8 +204,8 @@ class TestFloat8MultiProcess(FSDPTest, TestFloat8Common):
         # Pre-run a linear forward (gemm and bias) and backward (gemm) to
         # allocate the cuBLAS workspaces before measuring the memory usage
         # since the workspace size can differ between hardwares
-        lin = torch.nn.Linear(768, 768, device="cuda")
-        inp = torch.randn(1, 768, device="cuda")
+        lin = torch.nn.Linear(768, 768, device="xpu")
+        inp = torch.randn(1, 768, device="xpu")
         lin(inp).sum().backward()
         torch.cuda.empty_cache()
         base_mem_mb = self._get_peak_active_memory_mb()
@@ -260,7 +260,7 @@ class TestFloat8MultiProcess(FSDPTest, TestFloat8Common):
         self.assertLessEqual(curr_mem_mb - base_mem_mb, init_mem_mb)
 
         # Use a small input to minimize activation memory usage
-        inp = torch.randint(0, vocab_size, (1, 4), device="cuda")
+        inp = torch.randint(0, vocab_size, (1, 4), device="xpu")
 
         # Forward:
         loss = model(inp)
@@ -330,7 +330,7 @@ class Test2DParallelMultiThread(FSDPTestMultiThread, TestFloat8Common):
         dp_size = 2
         pp_size = self.world_size // dp_size
         global_mesh = init_device_mesh(
-            "cuda", (pp_size, dp_size), mesh_dim_names=("pp", "dp")
+            "xpu", (pp_size, dp_size), mesh_dim_names=("pp", "dp")
         )
         dp_mesh = global_mesh["dp"]
 
@@ -338,7 +338,7 @@ class Test2DParallelMultiThread(FSDPTestMultiThread, TestFloat8Common):
             # rank 0 and 1 are the 1st stage in the pipeline
             # rank 2 and 4 are doing nothing but waiting for the 1st stage
             torch.manual_seed(42 + self.rank)
-            hp_tensor = torch.randn(768, 32, device="cuda")
+            hp_tensor = torch.randn(768, 32, device="xpu")
             hp_tensor_to_float8_dynamic(
                 hp_tensor,
                 e4m3_dtype,
