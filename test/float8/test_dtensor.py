@@ -46,17 +46,28 @@ from torchao.utils import torch_version_at_least
 torch.set_float32_matmul_precision("high")
 
 
+def _get_device_type() -> str:
+    """Return the available accelerator device type, preferring xpu over cuda."""
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.xpu.is_available():
+        return "xpu"
+    raise RuntimeError("No accelerator (xpu or cuda) is available")
+
+
 def setup_distributed():
     world_size = int(os.environ.get("WORLD_SIZE", -1))
-    device_mesh = init_device_mesh("xpu", (world_size,))
+    device_type = _get_device_type()
+    device_mesh = init_device_mesh(device_type, (world_size,))
     # seed must be the same in all processes
     torch.manual_seed(1)
     local_rank = torch.distributed.get_rank()
-    torch.xpu.set_device(local_rank)
+    torch.get_device_module(device_type).set_device(local_rank)
     return device_mesh
 
 
 def _test_scaled_mm(mesh: DeviceMesh, size=16):
+    print("Testing scaled mm with float8 DTensor")
     device = mesh.device_type
     fp8_dtype = e4m3_dtype
     world_size = mesh.size()
@@ -100,6 +111,7 @@ def _test_scaled_mm(mesh: DeviceMesh, size=16):
 
 
 def _test_fp8_redistribute(mesh: DeviceMesh, size=16):
+    print("Testing fp8 redistribute")
     device = mesh.device_type
     fp8_dtype = e4m3_dtype
     world_size = mesh.size()
@@ -213,7 +225,8 @@ def _test_fp8_mlp_tensor_parallelism_compile(mesh: DeviceMesh, size=32):
 
 def _test_distribute_fsdp_tensor_subclass(tp_mesh: DeviceMesh):
     torch.manual_seed(42)
-    model = Transformer(ModelArgs(dropout_p=0.0, weight_tying=False)).xpu()
+    device_type = tp_mesh.device_type
+    model = Transformer(ModelArgs(dropout_p=0.0, weight_tying=False)).to(device_type)
     convert_to_float8_training(
         model,
         config=Float8LinearConfig(
@@ -251,6 +264,31 @@ if __name__ == "__main__":
         _test_fp8_redistribute,
         _test_dtensor_cast_to_fp8,
         _test_dtensor_fp8_autograd,
+        # _test_dtensor_fp8_autograd, #[rank0]: Traceback (most recent call last):
+# [rank0]:   File "/home/gta/repos/ao/test/float8/test_dtensor.py", line 261, in <module>
+# [rank0]:     raise e
+# [rank0]:   File "/home/gta/repos/ao/test/float8/test_dtensor.py", line 258, in <module>
+# [rank0]:     test(device_mesh)
+# [rank0]:   File "/home/gta/repos/ao/test/float8/test_dtensor.py", line 178, in _test_dtensor_fp8_autograd
+# [rank0]:     loss.backward()
+# [rank0]:   File "/home/gta/repos/ao/ao_pt212/lib/python3.12/site-packages/torch/_tensor.py", line 631, in backward
+# [rank0]:     torch.autograd.backward(
+# [rank0]:   File "/home/gta/repos/ao/ao_pt212/lib/python3.12/site-packages/torch/autograd/__init__.py", line 379, in backward
+# [rank0]:     _engine_run_backward(
+# [rank0]:   File "/home/gta/repos/ao/ao_pt212/lib/python3.12/site-packages/torch/autograd/graph.py", line 877, in _engine_run_backward
+# [rank0]:     return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+# [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# [rank0]:   File "/home/gta/repos/ao/ao_pt212/lib/python3.12/site-packages/torchao/float8/float8_training_tensor.py", line 374, in __torch_dispatch__
+# [rank0]:     return FLOAT8_OPS_TABLE[func](func, args, kwargs)
+# [rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+# [rank0]:   File "/home/gta/repos/ao/ao_pt212/lib/python3.12/site-packages/torchao/float8/float8_ops.py", line 386, in float8_mm
+# [rank0]:     tensor_out = addmm_float8_unwrapped(
+# [rank0]:                  ^^^^^^^^^^^^^^^^^^^^^^^
+# [rank0]:   File "/home/gta/repos/ao/ao_pt212/lib/python3.12/site-packages/torchao/float8/float8_ops.py", line 73, in addmm_float8_unwrapped
+# [rank0]:     output = torch._scaled_mm(
+# [rank0]:              ^^^^^^^^^^^^^^^^^
+# [rank0]: RuntimeError: Expected trailing dimension of mat1 to be divisible by 16 but got mat1 shape: (32x8).
+
         _test_fp8_mlp_tensor_parallelism_eager,
         _test_fp8_mlp_tensor_parallelism_compile,
         _test_distribute_fsdp_tensor_subclass,

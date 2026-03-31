@@ -44,6 +44,14 @@ from torchao.utils import (
 
 _DEVICE = [str(get_current_accelerator_device())]
 
+
+def _is_cuda_without_sm89() -> bool:
+    return str(get_current_accelerator_device()) == "cuda" and not is_sm_at_least_89()
+
+
+def _is_cuda_without_sm90() -> bool:
+    return str(get_current_accelerator_device()) == "cuda" and not is_sm_at_least_90()
+
 def _test_compile_base(
     backend: str,
     fullgraph: bool,
@@ -160,7 +168,7 @@ def test_aot_eager(
 
 @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
 @unittest.skipIf(
-    torch.cuda.is_available() and not is_sm_at_least_89(),
+    _is_cuda_without_sm89(),
     "CUDA with float8 support not available",
 )
 @pytest.mark.parametrize("fullgraph", [True])
@@ -207,7 +215,7 @@ def test_inductor_from_config_params(
 # TODO(future PR): make this cleaner.
 @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
 @unittest.skipIf(
-    torch.cuda.is_available() and not is_sm_at_least_90(),
+    _is_cuda_without_sm90(),
     "CUDA with capability 9.0 or greater not available",
 )
 @pytest.mark.parametrize(
@@ -252,7 +260,7 @@ class TestGraphBreaks(DynamoTestCase):
             return x_fp8
 
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
-    @unittest.skipIf(torch.cuda.is_available() and not is_sm_at_least_90(),
+    @unittest.skipIf(_is_cuda_without_sm90(),
                      "CUDA with capability 9.0 or greater not available")
     @parametrize("device", _DEVICE)
     def test_float8_with_graph_break_in_the_middle(self, device: torch.device):
@@ -268,7 +276,7 @@ class TestGraphBreaks(DynamoTestCase):
         torch.testing.assert_close(y_eager, y_compiled)
 
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
-    @unittest.skipIf(torch.cuda.is_available() and not is_sm_at_least_89(), 
+    @unittest.skipIf(_is_cuda_without_sm89(),
                      "CUDA with float8 support not available")
     @parametrize("device", _DEVICE)
     def test_float8_graph_input(self, device: torch.device):
@@ -292,7 +300,7 @@ class TestGraphBreaks(DynamoTestCase):
         torch.testing.assert_close(y2_eager, y2_compiled)
 
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
-    @unittest.skipIf(torch.cuda.is_available() and not is_sm_at_least_89(), 
+    @unittest.skipIf(_is_cuda_without_sm89(),
                      "CUDA with float8 support not available")
     @parametrize("device", _DEVICE)
     def test_float8_graph_output(self, device: torch.device):
@@ -355,7 +363,7 @@ class capture_stderr(list):
 )
 @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
 @unittest.skipIf(
-    torch.cuda.is_available() and not is_sm_at_least_89(),
+    _is_cuda_without_sm89(),
     "CUDA not available",
 )
 @pytest.mark.parametrize("device", _DEVICE)

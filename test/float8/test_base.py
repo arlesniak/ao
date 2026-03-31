@@ -280,7 +280,7 @@ class TestFloat8TrainingTensor(TestCase):
         sqnr = compute_error(c_ref, c_fp8_compute)
         assert sqnr >= 25.0
 
-    @unittest.skipIf(not torch.cuda.is_available(), "CUDA not available")
+    @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
     def test_fp8_dtype(
         self,
     ):
@@ -344,7 +344,7 @@ class TestFloat8Linear(TestCase):
     @parametrize("linear_dtype", [torch.bfloat16, torch.float32])
     @parametrize("linear_bias", [False, True])
     @parametrize("use_ac", [False, True])
-    @parametrize("device", _DEVICES)
+    @parametrize("device", _GPU_DEVICE)
     def test_linear_from_config_params(
         self,
         x_shape,

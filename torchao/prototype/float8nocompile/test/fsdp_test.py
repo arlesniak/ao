@@ -36,11 +36,27 @@ class TestModel(nn.Module):
         return self.layers(x)
 
 
-def setup_distributed():
+def _get_device_type() -> str:
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return "xpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    return ""
+
+
+def _get_backend(device_type: str) -> str:
+    return "xccl" if device_type == "xpu" else "nccl"
+
+
+def setup_distributed(device_type: str):
     rank = int(os.environ["RANK"])
+    local_rank = int(os.environ.get("LOCAL_RANK", rank))
     world_size = int(os.environ["WORLD_SIZE"])
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-    torch.cuda.set_device(rank)
+    dist.init_process_group(_get_backend(device_type), rank=rank, world_size=world_size)
+    if device_type == "xpu":
+        torch.xpu.set_device(local_rank)
+    else:
+        torch.cuda.set_device(local_rank)
 
 
 @pytest.fixture
@@ -56,10 +72,11 @@ def model2():
 
 
 def test_model_weights_and_gradients(model1, model2):
-    assert torch.cuda.is_available()
-    device = torch.device("cuda")
+    device_type = _get_device_type()
+    assert device_type, "No XPU/CUDA accelerator available"
+    device = torch.device(device_type)
 
-    setup_distributed()
+    setup_distributed(device_type)
 
     model1 = model1.to(torch.bfloat16).to(device)
     model2 = model2.to(torch.bfloat16).to(device)

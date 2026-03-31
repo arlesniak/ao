@@ -30,12 +30,24 @@ lr = 0.01
 N_ITER = 1
 
 
-def setup(rank, world_size):
+def _get_device_type() -> str:
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return "xpu"
+    if torch.cuda.is_available():
+        return "cuda"
+    return ""
+
+
+def _get_backend(device_type: str) -> str:
+    return "xccl" if device_type == "xpu" else "nccl"
+
+
+def setup(rank, world_size, backend):
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12355"
 
     # initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    dist.init_process_group(backend, rank=rank, world_size=world_size)
 
 
 def cleanup():
@@ -71,30 +83,38 @@ def get_model(K, N, is_fp8, emulate, base_dtype=torch.float32):
 # taken from https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
 # and modified
 def fsdp_main(rank, world_size, args):
-    setup(rank, world_size)
-    torch.cuda.set_device(rank)
+    emulate, device_type = args
+    setup(rank, world_size, _get_backend(device_type))
+    if device_type == "xpu":
+        torch.xpu.set_device(rank)
+    else:
+        torch.cuda.set_device(rank)
 
-    (emulate,) = args
+    device = torch.device(device_type, rank)
 
     # finally, if we remove the usage of self.bias_dtype, then
     # things work e2e. Note that FSDP does not support full-graph compile
     # regardless of float8.
 
-    model = get_model(K, N, is_fp8=True, emulate=emulate, base_dtype=torch.bfloat16).to(
-        rank
-    )
+    model = get_model(
+        K,
+        N,
+        is_fp8=True,
+        emulate=emulate,
+        base_dtype=torch.bfloat16,
+    ).to(device)
 
     # To compile FSDP, we need use_orig_params to True
     model = FSDP(model, use_orig_params=True)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=lr * world_size)
-    input_local = torch.randn(B, M, K, N, device="cuda")
+    input_local = torch.randn(B, M, K, N, device=device)
 
     model = torch.compile(model)
 
     for _iter in range(N_ITER):
         optimizer.zero_grad()
-        with torch.autocast("cuda"):
+        with torch.autocast(device_type):
             y_local = model(input_local)
         y_local.sum().backward()
         optimizer.step()
@@ -104,19 +124,26 @@ def fsdp_main(rank, world_size, args):
 
 
 def run():
+    device_type = _get_device_type()
+    if not device_type:
+        warnings.warn(
+            "No XPU/CUDA accelerator available; skipping run",
+            stacklevel=2,
+        )
+        return
+
     emulate = False
-    if not torch.cuda.is_available():
-        warnings.warn("CUDA not available, running in emulation_mode", stacklevel=2)
-        emulate = True
-    elif torch.cuda.get_device_capability() < (9, 0):
+    if device_type == "cuda" and torch.cuda.get_device_capability() < (9, 0):
         warnings.warn(
             f"CUDA capability {torch.cuda.get_device_capability()} < (9.0), running in emulation mode",
             stacklevel=2,
         )
         emulate = True
 
-    WORLD_SIZE = torch.cuda.device_count()
-    args = (emulate,)
+    WORLD_SIZE = (
+        torch.xpu.device_count() if device_type == "xpu" else torch.cuda.device_count()
+    )
+    args = (emulate, device_type)
     mp.spawn(fsdp_main, args=(WORLD_SIZE, args), nprocs=WORLD_SIZE, join=True)
 
 
