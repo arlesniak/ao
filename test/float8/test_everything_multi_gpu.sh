@@ -8,9 +8,17 @@
 # terminate script on first error
 set -e
 IS_ROCM=$(rocm-smi --version || true)
+HAS_ACCEL=$(python - <<'PY'
+import torch
 
-# These tests do not work on ROCm yet
-if [ -z "$IS_ROCM" ]
+has_xpu = hasattr(torch, "xpu") and torch.xpu.is_available()
+has_cuda = torch.cuda.is_available()
+print("1" if (has_xpu or has_cuda) else "0")
+PY
+)
+
+# These tests do not work on ROCm yet and require accelerator devices.
+if [ -z "$IS_ROCM" ] && [ "$HAS_ACCEL" = "1" ]
 then
 ./test/float8/test_fsdp.sh
 ./test/float8/test_fsdp_compile.sh

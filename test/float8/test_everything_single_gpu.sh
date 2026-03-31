@@ -12,5 +12,6 @@ pytest test/float8/test_base.py --verbose -s
 pytest test/float8/test_compile.py --verbose -s
 pytest test/float8/test_numerics_integration.py --verbose -s
 pytest test/float8/test_auto_filter.py --verbose -s
+pytest test/float8/test_float8_utils.py --verbose -s
 
 echo "all float8 single gpu tests successful"

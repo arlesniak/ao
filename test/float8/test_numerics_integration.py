@@ -33,6 +33,14 @@ from torchao.utils import (
 
 _DEVICE = [str(get_current_accelerator_device())]
 
+
+def _is_cuda_without_sm89() -> bool:
+    return str(get_current_accelerator_device()) == "cuda" and not is_sm_at_least_89()
+
+
+def _is_cuda_without_sm90() -> bool:
+    return str(get_current_accelerator_device()) == "cuda" and not is_sm_at_least_90()
+
 torch.manual_seed(0)
 
 
@@ -159,7 +167,7 @@ class TestFloat8NumericsIntegrationTest:
     )
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
     @unittest.skipIf(
-        torch.cuda.is_available() and not is_sm_at_least_89(),
+        _is_cuda_without_sm89(),
         "requires SM89 compatible machine",
     )
     @pytest.mark.parametrize("device", _DEVICE)
@@ -188,7 +196,7 @@ class TestFloat8NumericsIntegrationTest:
     )
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
     @unittest.skipIf(
-        torch.cuda.is_available() and not is_sm_at_least_90(),
+        _is_cuda_without_sm90(),
         "requires SM90 compatible machine",
     )
     @pytest.mark.parametrize("device", _DEVICE)
