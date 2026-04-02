@@ -52,11 +52,14 @@ from torchao.utils import (
     is_sm_at_least_90,
 )
 
-_DEVICES = get_available_devices()
-_GPU_DEVICE = [str(get_current_accelerator_device())]
-
 random.seed(0)
 torch.manual_seed(0)
+
+_DEVICES = get_available_devices()[1:]  # Exclude CPU since this test is for GPU kernels
+if not _DEVICES:
+    _DEVICES = [
+        pytest.param("no_gpu", marks=pytest.mark.skip(reason="GPU not available"))
+    ]
 
 
 def bitwise_identical(a: Float8TrainingTensor, b: Float8TrainingTensor) -> bool:

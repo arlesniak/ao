@@ -26,6 +26,7 @@ from torchao.float8.float8_linear_utils import (
 from torchao.float8.float8_utils import IS_ROCM, compute_error
 from torchao.testing.training.test_utils import get_test_float8_linear_config
 from torchao.utils import (
+    get_available_devices,
     get_current_accelerator_device,
     is_sm_at_least_89,
     is_sm_at_least_90,
@@ -33,15 +34,11 @@ from torchao.utils import (
 
 _DEVICE = [str(get_current_accelerator_device())]
 
-
-def _is_cuda_without_sm89() -> bool:
-    return str(get_current_accelerator_device()) == "cuda" and not is_sm_at_least_89()
-
-
-def _is_cuda_without_sm90() -> bool:
-    return str(get_current_accelerator_device()) == "cuda" and not is_sm_at_least_90()
-
-torch.manual_seed(0)
+_DEVICES = get_available_devices()[1:]  # Exclude CPU since this test is for GPU kernels
+if not _DEVICES:
+    _DEVICES = [
+        pytest.param("no_gpu", marks=pytest.mark.skip(reason="GPU not available"))
+    ]
 
 
 # copied from https://github.com/pytorch/torchtitan/blob/main/torchtitan/models/llama/model.py
@@ -167,7 +164,7 @@ class TestFloat8NumericsIntegrationTest:
     )
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
     @unittest.skipIf(
-        _is_cuda_without_sm89(),
+        torch.cuda.is_available() and not is_sm_at_least_89(),
         "requires SM89 compatible machine",
     )
     @pytest.mark.parametrize("device", _DEVICE)
@@ -196,7 +193,7 @@ class TestFloat8NumericsIntegrationTest:
     )
     @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
     @unittest.skipIf(
-        _is_cuda_without_sm90(),
+        torch.cuda.is_available() and not is_sm_at_least_90(),
         "requires SM90 compatible machine",
     )
     @pytest.mark.parametrize("device", _DEVICE)
