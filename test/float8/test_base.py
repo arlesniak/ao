@@ -325,11 +325,9 @@ class TestFloat8Linear(TestCase):
         if m_ref.bias is not None:
             torch.testing.assert_close(m_ref.bias.grad, m_fp8.bias.grad)
 
-    @parametrize(
-        "emulate", [True, False] if is_sm_at_least_89() else [True]
-    )
-    @parametrize("x_shape", [(16, 16), (2, 16, 16), (3, 2, 16, 16)])
-    @parametrize(
+    @pytest.mark.parametrize("emulate", [True, False])
+    @pytest.mark.parametrize("x_shape", [(16, 16), (2, 16, 16), (3, 2, 16, 16)])
+    @pytest.mark.parametrize(
         "scaling_type_input",
         [ScalingType.DYNAMIC],
     )
@@ -357,6 +355,8 @@ class TestFloat8Linear(TestCase):
         use_ac: bool,
         device: torch.device,
     ):
+        if not emulate and device == "cuda" and not is_sm_at_least_89():
+            self.skipTest("CUDA capability >= 8.9 required for native float8 support")
         x = torch.randn(*x_shape, device=device, dtype=linear_dtype)
         m_ref = nn.Linear(16, 32, bias=linear_bias, device=device, dtype=linear_dtype)
         config = get_test_float8_linear_config(
@@ -414,10 +414,8 @@ class TestFloat8Linear(TestCase):
             config,
         )
 
-    @parametrize(
-        "emulate", [True, False] if is_sm_at_least_89() else [True]
-    )
-    @parametrize(
+    @pytest.mark.parametrize("emulate", [True, False])
+    @pytest.mark.parametrize(
         "linear_dtype", [torch.float16, torch.bfloat16, torch.float32]
     )
     @parametrize(
@@ -437,6 +435,8 @@ class TestFloat8Linear(TestCase):
         recipe_name: Float8LinearRecipeName,
         device,
     ):
+        if not emulate and device == "cuda" and not is_sm_at_least_89():
+            self.skipTest("CUDA capability >= 8.9 required for native float8 support")
         m_ref = nn.Sequential(
             nn.Linear(32, 32, device=device, dtype=linear_dtype),
             nn.Linear(32, 32, device=device, dtype=linear_dtype),

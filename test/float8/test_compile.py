@@ -100,7 +100,7 @@ def _test_compile_base(
     "scaling_type_grad_output",
     [ScalingType.DYNAMIC],
 )
-@pytest.mark.parametrize("emulate", [False, True] if is_sm_at_least_89() else [True])
+@pytest.mark.parametrize("emulate", [True, False])
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
 @pytest.mark.parametrize("device", _DEVICE)
 def test_eager_only(
@@ -112,6 +112,9 @@ def test_eager_only(
     dtype: torch.dtype,
     device: torch.device,
 ):
+    if not emulate and device == "cuda" and not is_sm_at_least_89():
+        pytest.skip("CUDA capability >= 8.9 required for native float8 support")
+
     torch._dynamo.reset()
     config = get_test_float8_linear_config(
         scaling_type_input,
@@ -129,7 +132,7 @@ def test_eager_only(
 
 @unittest.skipIf(not torch.accelerator.is_available(), "GPU not available")
 @pytest.mark.parametrize("fullgraph", [True])
-@pytest.mark.parametrize("emulate", [False, True] if is_sm_at_least_89() else [True])
+@pytest.mark.parametrize("emulate", [False, True])
 @pytest.mark.parametrize("scaling_type_input", [ScalingType.DYNAMIC])
 @pytest.mark.parametrize(
     "scaling_type_weight",
@@ -150,6 +153,9 @@ def test_aot_eager(
     dtype: torch.dtype,
     device: torch.device,
 ):
+    if not emulate and device == "cuda" and not is_sm_at_least_89():
+        pytest.skip("CUDA capability >= 8.9 required for native float8 support")
+
     torch._dynamo.reset()
     config = get_test_float8_linear_config(
         scaling_type_input,
