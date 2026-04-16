@@ -322,9 +322,7 @@ class TestFloat8Linear:
         if m_ref.bias is not None:
             torch.testing.assert_close(m_ref.bias.grad, m_fp8.bias.grad)
 
-    @pytest.mark.parametrize(
-        "emulate", [True, False] if is_sm_at_least_89() else [True]
-    )
+    @pytest.mark.parametrize("emulate", [True, False])
     @pytest.mark.parametrize("x_shape", [(16, 16), (2, 16, 16), (3, 2, 16, 16)])
     @pytest.mark.parametrize(
         "scaling_type_input",
@@ -414,9 +412,7 @@ class TestFloat8Linear:
             config,
         )
 
-    @pytest.mark.parametrize(
-        "emulate", [True, False] if is_sm_at_least_89() else [True]
-    )
+    @pytest.mark.parametrize("emulate", [True, False])
     @pytest.mark.parametrize(
         "linear_dtype", [torch.float16, torch.bfloat16, torch.float32]
     )
