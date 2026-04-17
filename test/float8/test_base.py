@@ -836,12 +836,6 @@ class TestFloat8LinearUtils(unittest.TestCase):
             (zero_cnt, max_cnt) = fp8_tensor_statistics(fp8_over_underflow, lp_dtype)
             self.assertEqual((zero_cnt, max_cnt), (tensor_len, tensor_len))
 
-instantiate_parametrized_tests(TestFloat8TrainingTensor)
-instantiate_parametrized_tests(TestFloat8Linear)
-instantiate_parametrized_tests(TestScaledMM)
-instantiate_parametrized_tests(TestNumerics)
-instantiate_parametrized_tests(TestFloat8LinearUtils)
 
 if __name__ == "__main__":
-    run_tests()
-    # pytest.main([__file__])
+    pytest.main([__file__])

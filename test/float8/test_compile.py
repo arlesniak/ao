@@ -103,7 +103,7 @@ def _test_compile_base(
 )
 @pytest.mark.parametrize("emulate", [True, False])
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", _DEVICE)
+@pytest.mark.parametrize("device", _DEVICES)
 def test_eager_only(
     fullgraph,
     emulate: bool,
@@ -144,7 +144,7 @@ def test_eager_only(
     [ScalingType.DYNAMIC],
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", _DEVICE)
+@pytest.mark.parametrize("device", _DEVICES)
 def test_aot_eager(
     fullgraph,
     emulate: bool,
@@ -185,7 +185,7 @@ def test_aot_eager(
     [ScalingType.DYNAMIC],
 )
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-@pytest.mark.parametrize("device", _DEVICE)
+@pytest.mark.parametrize("device", _DEVICES)
 def test_inductor_from_config_params(
     fullgraph,
     emulate: bool,
@@ -227,7 +227,7 @@ def test_inductor_from_config_params(
         Float8LinearRecipeName.ROWWISE_WITH_GW_HP,
     ],
 )
-@pytest.mark.parametrize("device", _DEVICE)
+@pytest.mark.parametrize("device", _DEVICES)
 def test_inductor_from_recipe(recipe_name, device: torch.device):
     torch._dynamo.reset()
     config = Float8LinearConfig.from_recipe_name(recipe_name)
@@ -381,7 +381,7 @@ class capture_stderr(list):
     _is_cuda_without_sm89(),
     "CUDA not available",
 )
-@pytest.mark.parametrize("device", _DEVICE)
+@pytest.mark.parametrize("device", _DEVICES)
 def test_dynamic_scale_numeric_parity(
     dtype: torch.dtype, round_scales_to_power_of_2: bool, device: torch.device):
     scaling_type_weight = ScalingType.DYNAMIC
