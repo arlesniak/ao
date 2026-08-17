@@ -46,15 +46,43 @@ from torchao.utils import torch_version_at_least
 torch.set_float32_matmul_precision("high")
 
 
+def get_device_type() -> str:
+    """Current accelerator type, e.g. "cuda" / "xpu"."""
+    return str(torch.accelerator.current_accelerator())
+
+
+def get_world_size() -> int:
+    return int(os.environ.get("WORLD_SIZE", -1))
+
+
+def bind_local_device() -> str:
+    """Pin this process to its local device and return the device type."""
+    device_type = get_device_type()
+    torch.get_device_module(device_type).set_device(torch.distributed.get_rank())
+    return device_type
+
+
+def build_device_mesh() -> DeviceMesh:
+    return init_device_mesh(get_device_type(), (get_world_size(),))
+
+
 def setup_distributed():
-    world_size = int(os.environ.get("WORLD_SIZE", -1))
-    device = str(torch.accelerator.current_accelerator())
-    device_mesh = init_device_mesh(device, (world_size,))
+    device_mesh = build_device_mesh()
     # seed must be the same in all processes
     torch.manual_seed(1)
-    local_rank = torch.distributed.get_rank()
-    torch.get_device_module(device).set_device(local_rank)
+    bind_local_device()
     return device_mesh
+
+
+def _to_fp8_tensor(tensor, fp8_dtype=e4m3_dtype, role=None):
+    scale = tensor_to_scale(tensor, fp8_dtype).float()
+    return hp_tensor_and_scale_to_float8(tensor, scale, fp8_dtype, None, role)
+
+
+def _distributed_fp8_tensor(tensor, mesh, placement, role=None):
+    return DTensor.from_local(
+        _to_fp8_tensor(tensor, role=role), mesh, [placement], run_check=False
+    )
 
 
 def _test_scaled_mm(mesh: DeviceMesh, size=16):
@@ -76,18 +104,12 @@ def _test_scaled_mm(mesh: DeviceMesh, size=16):
         (size, size),
     )
     for idx, (lhs_placement, rhs_placement) in enumerate(placement_combs):
-        x_scale = tensor_to_scale(x_fp32, fp8_dtype).float()
-        y_scale = tensor_to_scale(y_fp32, fp8_dtype).float()
-
-        x_fp8 = hp_tensor_and_scale_to_float8(
-            x_fp32, x_scale, fp8_dtype, None, GemmInputRole.INPUT
+        dist_x_fp8 = _distributed_fp8_tensor(
+            x_fp32, mesh, lhs_placement, GemmInputRole.INPUT
         )
-        y_fp8 = hp_tensor_and_scale_to_float8(
-            y_fp32, y_scale, fp8_dtype, None, GemmInputRole.WEIGHT
+        dist_y_fp8 = _distributed_fp8_tensor(
+            y_fp32, mesh, rhs_placement, GemmInputRole.WEIGHT
         )
-
-        dist_x_fp8 = DTensor.from_local(x_fp8, mesh, [lhs_placement], run_check=False)
-        dist_y_fp8 = DTensor.from_local(y_fp8, mesh, [rhs_placement], run_check=False)
 
         assert isinstance(dist_x_fp8.to_local(), Float8TrainingTensor)
         assert isinstance(dist_y_fp8.to_local(), Float8TrainingTensor)
@@ -107,11 +129,7 @@ def _test_fp8_redistribute(mesh: DeviceMesh, size=16):
 
     x_fp32 = torch.rand(size, size, device=device)
 
-    x_scale = tensor_to_scale(x_fp32, fp8_dtype).float()
-
-    x_fp8 = hp_tensor_and_scale_to_float8(x_fp32, x_scale, fp8_dtype)
-
-    dist_x_fp8 = DTensor.from_local(x_fp8, mesh, [Shard(0)], run_check=False)
+    dist_x_fp8 = _distributed_fp8_tensor(x_fp32, mesh, Shard(0))
     out_dist = dist_x_fp8.redistribute(placements=[Replicate()])
     assert out_dist.shape == (size * world_size, size)
     assert out_dist.placements == (Replicate(),)
@@ -154,25 +172,12 @@ def _test_dtensor_fp8_autograd(mesh: DeviceMesh, size=16):
     target = torch.rand(size, 2 * size, device=device)
 
     dist_x_fp32 = distribute_tensor(x_fp32, mesh, [Shard(0)])
-    dist_x_scale = tensor_to_scale(dist_x_fp32, fp8_dtype).float()
-
     dist_wight_fp32 = distribute_tensor(local_weight, mesh, [Shard(0)])
-    dist_weight_scale = tensor_to_scale(dist_wight_fp32, fp8_dtype).float()
     dist_target = distribute_tensor(target, mesh, [Shard(0)])
 
-    dist_x_fp8 = hp_tensor_and_scale_to_float8(
-        dist_x_fp32,
-        dist_x_scale,
-        fp8_dtype,
-        None,
-        GemmInputRole.INPUT,
-    )
-    dist_weight_fp8 = hp_tensor_and_scale_to_float8(
-        dist_wight_fp32,
-        dist_weight_scale,
-        fp8_dtype,
-        None,
-        GemmInputRole.WEIGHT,
+    dist_x_fp8 = _to_fp8_tensor(dist_x_fp32, fp8_dtype, GemmInputRole.INPUT)
+    dist_weight_fp8 = _to_fp8_tensor(
+        dist_wight_fp32, fp8_dtype, GemmInputRole.WEIGHT
     )
 
     out = torch.nn.functional.linear(dist_x_fp8, dist_weight_fp8)
@@ -183,33 +188,23 @@ def _test_dtensor_fp8_autograd(mesh: DeviceMesh, size=16):
 
 
 def _test_fp8_mlp_tensor_parallelism_eager(mesh: DeviceMesh, size=32):
-    tensorwise_config = Float8LinearConfig(emulate=True)
-    _test_lowp_mlp_tensor_parallelism_base(
-        mesh, tensorwise_config, size, compile=False, allgather_in_lowp=True
-    )
+    _test_fp8_mlp_tensor_parallelism(mesh, size, compile=False)
 
-    rowwise_config = Float8LinearConfig.from_recipe_name(Float8LinearRecipeName.ROWWISE)
-    # hack around config being frozen
-    # TODO(future PR): we should make this nicer at the config level
-    object.__setattr__(rowwise_config, "emulate", True)
-    _test_lowp_mlp_tensor_parallelism_base(
-        mesh, rowwise_config, size, compile=False, allgather_in_lowp=False
+
+def _test_fp8_mlp_tensor_parallelism(mesh, size, compile):
+    configs = (
+        (Float8LinearConfig(emulate=True), True),
+        (Float8LinearConfig.from_recipe_name(Float8LinearRecipeName.ROWWISE), False),
     )
+    for config, allgather_in_lowp in configs:
+        object.__setattr__(config, "emulate", True)
+        _test_lowp_mlp_tensor_parallelism_base(
+            mesh, config, size, compile=compile, allgather_in_lowp=allgather_in_lowp
+        )
 
 
 def _test_fp8_mlp_tensor_parallelism_compile(mesh: DeviceMesh, size=32):
-    tensorwise_config = Float8LinearConfig(emulate=True)
-    _test_lowp_mlp_tensor_parallelism_base(
-        mesh, tensorwise_config, size, compile=True, allgather_in_lowp=True
-    )
-
-    rowwise_config = Float8LinearConfig.from_recipe_name(Float8LinearRecipeName.ROWWISE)
-    # hack around config being frozen
-    # TODO(future PR): we should make this nicer at the config level
-    object.__setattr__(rowwise_config, "emulate", True)
-    _test_lowp_mlp_tensor_parallelism_base(
-        mesh, rowwise_config, size, compile=True, allgather_in_lowp=False
-    )
+    _test_fp8_mlp_tensor_parallelism(mesh, size, compile=True)
 
 
 def _test_distribute_fsdp_tensor_subclass(tp_mesh: DeviceMesh):
