@@ -14,6 +14,8 @@ Test numerics of bf16 versus float8 with FSDP on. At a high level:
 import copy
 import os
 import warnings
+from contextlib import contextmanager
+from dataclasses import dataclass
 
 import fire
 import torch
@@ -37,144 +39,170 @@ from torchao.float8.float8_utils import compute_error
 torch.manual_seed(0)
 
 B, M, K, N = 8, 8, 32, 32
-lr = 0.01
+LR = 0.01
 N_ITER = 2
+SQNR_THRESHOLD = 15.0
 
 
-def setup(rank, world_size):
+def get_device_type():
+    """Return the current accelerator device type, falling back to CPU."""
+    if torch.accelerator.is_available():
+        return torch.accelerator.current_accelerator().type
+    return "cpu"
+
+
+DEVICE_TYPE = get_device_type()
+
+
+def get_backend():
+    """Return the appropriate distributed backend for the current device."""
+    return "nccl" if DEVICE_TYPE == "cuda" else "xccl"
+
+
+@dataclass(frozen=True)
+class RunArgs:
+    """Configuration passed to each spawned FSDP worker."""
+
+    emulate: bool
+    base_dtype: torch.dtype
+    compile: bool
+
+
+@contextmanager
+def distributed_context(rank, world_size):
+    """Set up and tear down the NCCL process group for a single worker."""
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "12355"
-
-    # initialize the process group
-    device_type = torch.accelerator.current_accelerator().type
-    backend = dist.get_default_backend_for_device(device_type)
-    dist.init_process_group(backend, rank=rank, world_size=world_size)
-
-
-def cleanup():
-    dist.destroy_process_group()
+    dist.init_process_group(get_backend(), rank=rank, world_size=world_size)
+    try:
+        yield
+    finally:
+        dist.destroy_process_group()
 
 
 def get_model(K, N, base_dtype=torch.float32):
-    m = nn.Sequential(
+    return nn.Sequential(
         nn.Linear(K, N, dtype=base_dtype),
         nn.ReLU(),
         nn.Linear(N, N, dtype=base_dtype),
         nn.ReLU(),
     )
-    return m
 
 
-# taken from https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
-# and modified
-def fsdp_main(rank, world_size, args):
-    setup(rank, world_size)
-    device_type = torch.accelerator.current_accelerator().type
-    torch.accelerator.set_device_index(rank)
-    device = f"{device_type}:{rank}"
-    print("args", args)
-
-    emulate, base_dtype, compile = args
-    model = get_model(K, N, base_dtype=base_dtype).to(device)
-    model_fp8 = copy.deepcopy(model)
-
-    config = Float8LinearConfig()
+def build_models(rank, base_dtype):
+    """Return (bf16_reference, float8) models, both wrapped in FSDP."""
+    reference = get_model(K, N, base_dtype=base_dtype).to(rank)
+    float8 = copy.deepcopy(reference)
 
     # Note: we only iterate over `scaling_type_weight` because FSDP only interacts
     # with weights.
-    convert_to_float8_training(
-        model_fp8,
-        config=config,
-    )
+    convert_to_float8_training(float8, config=Float8LinearConfig())
 
     # To compile FSDP, we need use_orig_params to True
-    model = FSDP(model, use_orig_params=True)
-    model_fp8 = FSDP(model_fp8, use_orig_params=True)
-    # TODO: The following line doesn't work. We should fix it.
-    # model = FSDP(torch.compile(model), use_orig_params=True)
+    # TODO: FSDP(torch.compile(model), use_orig_params=True) doesn't work yet.
+    reference = FSDP(reference, use_orig_params=True)
+    float8 = FSDP(float8, use_orig_params=True)
+    return reference, float8
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
-    optimizer_fp8 = torch.optim.SGD(model_fp8.parameters(), lr=lr)
 
+def make_local_batches(rank, world_size, base_dtype):
+    """Slice global input/grad tensors into this rank's local shard."""
     # Note: we need two different inputs to properly measure the impact of
     # delayed scaling, before the first input uses dynamic scaling to
     # populate the buffers
     # TODO(future PR): delete ^, since we deleted delayed scaling
-    ref_input_global = [
-        torch.randn(B, M, K).to(device).to(base_dtype),
-        torch.randn(B, M, K).to(device).to(base_dtype),
+    inputs_global = [
+        torch.randn(B, M, K, device=DEVICE_TYPE).to(base_dtype) for _ in range(N_ITER)
     ]
-    ref_grad_global = [
-        torch.randn(B, M, N).to(device).to(base_dtype),
-        torch.randn(B, M, N).to(device).to(base_dtype),
+    grads_global = [
+        torch.randn(B, M, N, device=DEVICE_TYPE).to(base_dtype) for _ in range(N_ITER)
     ]
-    ref_input_local = []
-    ref_grad_local = []
 
     # basic distributed data sampling
     assert B % world_size == 0
-    bsz_local_start = int(rank / world_size * B)
-    bsz_local_end = int((rank + 1) / world_size * B)
-    for idx in range(N_ITER):
-        ref_input_local.append(
-            ref_input_global[idx][bsz_local_start:bsz_local_end].to(device)
-        )
-        ref_grad_local.append(
-            ref_grad_global[idx][bsz_local_start:bsz_local_end].to(device)
-        )
+    start = int(rank / world_size * B)
+    end = int((rank + 1) / world_size * B)
+    inputs_local = [t[start:end].to(rank) for t in inputs_global]
+    grads_local = [g[start:end].to(rank) for g in grads_global]
+    return inputs_local, grads_local
 
-    def forward_backward(model, optim, is_fp8, i):
-        optim.zero_grad()
-        y_local = model(ref_input_local[i])
-        y_local.backward(ref_grad_local[i])
-        optim.step()
-        return y_local
 
-    for i in range(N_ITER):
-        # We first run one iteration without compile, as a workaround to compile float8 layer.
-        # In the first iter, float8 layers go to the branches of "self.is_amax_initialized == False"
-        # After that, float8 layers go the the branches of "self.is_amax_initialized == True"
-        # TODO: Need to fix compile to run wihtout this workaround.
-        if i == 1 and compile:
-            model = torch.compile(model)
-            model_fp8 = torch.compile(model_fp8)
-        y_local = forward_backward(model, optimizer, is_fp8=False, i=i)
-        y_local_fp8 = forward_backward(model_fp8, optimizer_fp8, is_fp8=True, i=i)
-        local_sqnr = compute_error(y_local, y_local_fp8)  # noqa: F841
+def forward_backward(model, optim, x, grad):
+    optim.zero_grad()
+    y = model(x)
+    y.backward(grad)
+    optim.step()
+    return y
 
-    # get global y
-    y_global = [
-        torch.zeros(*y_local.shape, dtype=base_dtype).to(device)
-        for r in range(world_size)
+
+def all_gather_cat(local, world_size, base_dtype, rank):
+    """All-gather a local tensor across ranks and concatenate along dim 0."""
+    gathered = [
+        torch.zeros(*local.shape, dtype=base_dtype).to(rank) for _ in range(world_size)
     ]
-    dist.all_gather(y_global, y_local)
-    y_global = torch.cat(y_global, dim=0)
-    y_global_fp8 = [
-        torch.zeros(*y_local_fp8.shape, dtype=base_dtype).to(device)
-        for r in range(world_size)
-    ]
-    dist.all_gather(y_global_fp8, y_local_fp8)
-    y_global_fp8 = torch.cat(y_global_fp8, dim=0)
-    if rank == 0:
-        sqnr = compute_error(y_global, y_global_fp8)
-        assert sqnr > 15.0, f"SQNR of {sqnr} is too low"
+    dist.all_gather(gathered, local)
+    return torch.cat(gathered, dim=0)
 
-    # get global state dict
-    # https://pytorch.org/tutorials/intermediate/FSDP_adavnced_tutorial.html
-    dist.barrier()
+
+def full_state_dict(model):
     save_policy = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
     with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, save_policy):
-        cpu_state = model.state_dict()
-    with FSDP.state_dict_type(model_fp8, StateDictType.FULL_STATE_DICT, save_policy):
-        cpu_state_fp8 = model_fp8.state_dict()
-    if rank == 0:
-        for k, v1 in cpu_state.items():
-            v2 = cpu_state_fp8[k]
-            v1, v2 = v1.cpu(), v2.cpu()
-            sqnr = compute_error(v1, v2)
-            assert sqnr > 15.0, f"SQNR of {sqnr} is too low, k: {k}, v1: {v1}, v2: {v2}"
+        return model.state_dict()
 
-    cleanup()
+
+def assert_sqnr(v1, v2, msg=""):
+    sqnr = compute_error(v1, v2)
+    assert sqnr > SQNR_THRESHOLD, f"SQNR of {sqnr} is too low{msg}"
+
+
+# taken from https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
+# and modified
+def fsdp_main(rank, world_size, args: RunArgs):
+    torch.accelerator.set_device_index(rank)
+    print("args", args)
+
+    with distributed_context(rank, world_size):
+        reference, float8 = build_models(rank, args.base_dtype)
+        opt_ref = torch.optim.SGD(reference.parameters(), lr=LR)
+        opt_fp8 = torch.optim.SGD(float8.parameters(), lr=LR)
+
+        inputs_local, grads_local = make_local_batches(
+            rank, world_size, args.base_dtype
+        )
+
+        y_local = y_local_fp8 = None
+        for i in range(N_ITER):
+            # We first run one iteration without compile, as a workaround to compile
+            # the float8 layer. In the first iter, float8 layers take the
+            # "is_amax_initialized == False" branch; afterwards the True branch.
+            # TODO: Need to fix compile to run without this workaround.
+            if i == 1 and args.compile:
+                reference = torch.compile(reference)
+                float8 = torch.compile(float8)
+            y_local = forward_backward(
+                reference, opt_ref, inputs_local[i], grads_local[i]
+            )
+            y_local_fp8 = forward_backward(
+                float8, opt_fp8, inputs_local[i], grads_local[i]
+            )
+            _ = compute_error(y_local, y_local_fp8)  # noqa: F841
+
+        # compare gathered outputs
+        y_global = all_gather_cat(y_local, world_size, args.base_dtype, rank)
+        y_global_fp8 = all_gather_cat(y_local_fp8, world_size, args.base_dtype, rank)
+        if rank == 0:
+            assert_sqnr(y_global, y_global_fp8)
+
+        # compare global state dicts
+        # https://pytorch.org/tutorials/intermediate/FSDP_adavnced_tutorial.html
+        dist.barrier()
+        cpu_state = full_state_dict(reference)
+        cpu_state_fp8 = full_state_dict(float8)
+        if rank == 0:
+            for k, v1 in cpu_state.items():
+                v2 = cpu_state_fp8[k]
+                v1, v2 = v1.cpu(), v2.cpu()
+                assert_sqnr(v1, v2, msg=f", k: {k}, v1: {v1}, v2: {v2}")
 
 
 def run(compile_fsdp: bool = False):
@@ -182,17 +210,17 @@ def run(compile_fsdp: bool = False):
 
     emulate = False
     if not torch.accelerator.is_available():
-        warnings.warn("GPU not available, running in emulation_mode")
+        warnings.warn("Accelerator not available, running in emulation_mode")
         emulate = True
-    elif torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 9):
+    elif DEVICE_TYPE == "cuda" and torch.cuda.get_device_capability() < (8, 9):
         warnings.warn(
             f"CUDA capability {torch.cuda.get_device_capability()} < (8.9), running in emulation mode"
         )
         emulate = True
 
-    WORLD_SIZE = torch.accelerator.device_count()
-    args = (emulate, base_dtype, compile_fsdp)
-    mp.spawn(fsdp_main, args=(WORLD_SIZE, args), nprocs=WORLD_SIZE, join=True)
+    world_size = torch.accelerator.device_count() if not emulate else 1
+    args = RunArgs(emulate=emulate, base_dtype=base_dtype, compile=compile_fsdp)
+    mp.spawn(fsdp_main, args=(world_size, args), nprocs=world_size, join=True)
 
 
 if __name__ == "__main__":
